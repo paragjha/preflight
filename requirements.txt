@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-multipart   # transitive: FastAPI Form/File parsing for POST /api/batches
+openpyxl
+httpx
+pytest

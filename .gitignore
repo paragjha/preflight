@@ -1,0 +1,11 @@
+.env
+FIXES-ROUND-1.md
+UX-PASS.md
+data/
+demo_batch.xlsx
+demo_batch.answer_key.json
+demo_template.xlsx
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

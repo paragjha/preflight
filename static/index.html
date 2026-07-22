@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PreFlight</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/opal.css">
+<style>
+  /* App-specific layout on top of the design system. Nothing here should
+     duplicate a ds-* class — only compose them into page structure. */
+  .app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; align-items: start; }
+  /* Sidebar sticks to the viewport as main scrolls. Internal `ds-sidenav-list`
+     already has overflow-y: auto, so a long batch list scrolls in place. */
+  .app > .ds-sidenav { position: sticky; top: 0; height: 100vh; }
+  .main { padding: 28px 36px 56px; overflow-x: hidden; min-width: 0; }
+
+  /* Back-to-top pill. Hidden below the fold; slides in from below on scroll. */
+  .back-to-top {
+    position: fixed; left: 50%; bottom: 22px;
+    transform: translate(-50%, 80px);
+    opacity: 0; pointer-events: none;
+    transition: transform var(--dur-3) var(--ease-spring), opacity var(--dur-2) var(--ease-out);
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 14px;
+    border-radius: var(--r-pill);
+    background: var(--glass-fill-strong); border: 1px solid var(--glass-edge);
+    color: var(--text-primary);
+    font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--glass-highlight), var(--shadow-md);
+    backdrop-filter: blur(20px) saturate(1.6);
+    z-index: 90;
+  }
+  .back-to-top:hover { background: var(--surface); }
+  .back-to-top.is-visible { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  .back-to-top svg { width: 13px; height: 13px; }
+  @media (prefers-reduced-motion: reduce) {
+    .back-to-top { transition: opacity var(--dur-2); transform: translate(-50%, 0); }
+  }
+  .brand-mark { width: 26px; height: 26px; border-radius: 50%; background: var(--gradient-brand); box-shadow: var(--shadow-brand); flex: 0 0 auto; }
+  .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 22px; }
+  .topbar h1 { font-size: var(--text-3xl); font-weight: 700; letter-spacing: var(--tracking-display); margin: 0; line-height: 1.05; }
+  .topbar-sub { font-size: var(--text-sm); color: var(--text-secondary); margin-top: 6px; display: flex; align-items: center; gap: 10px; }
+  .region-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--r-pill); background: var(--brand-soft); color: var(--text-brand); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* Upload */
+  .upload-view { max-width: 760px; margin: 40px auto 0; }
+  .upload-hero { text-align: center; margin-bottom: 28px; }
+  .upload-orb { width: 88px; height: 88px; border-radius: 50%; background: var(--gradient-orb); margin: 0 auto 20px; box-shadow: 0 20px 50px -20px rgba(124,58,237,0.5); animation: 10s linear infinite ds-orb-rotate; }
+  .upload-hero h2 { font-size: var(--text-4xl); font-weight: 800; letter-spacing: var(--tracking-display); margin: 0 0 10px; line-height: 1.05; }
+  .upload-hero p { color: var(--text-secondary); font-size: var(--text-md); margin: 0 auto; max-width: 520px; line-height: var(--leading-normal); }
+  .upload-zone { border: 2px dashed var(--border-strong); border-radius: var(--r-2xl); padding: 32px; background: var(--surface); transition: border-color var(--dur-2), background-color var(--dur-2); }
+  .upload-zone.is-drag { border-color: var(--brand); background: var(--brand-soft); }
+  .upload-inner { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .upload-icon { width: 40px; height: 40px; color: var(--text-tertiary); }
+  .upload-form { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: start; width: 100%; }
+  .upload-form .file-input { width: 100%; height: var(--control-md); padding: 6px 12px; border-radius: var(--r-pill); border: 1px solid var(--border-default); background: var(--surface); font-family: var(--font-sans); font-size: 13px; }
+  /* Preflight button aligns with the input row (below the labels). */
+  .upload-form > .ds-btn { margin-top: 22px; }
+  .filename-tags { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-height: 0; }
+  /* Demo shortcut: caps label + button + hint sit together (law of proximity). */
+  .upload-demo-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .upload-demo-row .ds-caps { color: var(--text-tertiary); }
+
+  /* Stage progress during upload */
+  .stages { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; width: 100%; }
+  .stage { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--border-subtle); font-size: var(--text-sm); }
+  .stage-mark { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text-tertiary); }
+  .stage-mark svg { width: 100%; height: 100%; }
+  .stage.is-active .stage-mark { color: var(--brand); }
+  .stage.is-done { background: var(--success-50); border-color: var(--success-500); }
+  .stage.is-done .stage-mark { color: var(--success-600); }
+  .stage.is-warn { background: var(--warning-50); border-color: var(--warning-500); }
+  .stage.is-warn .stage-mark { color: var(--warning-600); }
+  .stage-label { color: var(--text-primary); font-weight: 500; }
+  .stage.is-done .stage-label, .stage.is-warn .stage-label { color: var(--text-primary); }
+
+  /* Metrics grid — narrative order + hero card */
+  .metrics-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1.4fr 1fr; gap: 14px; margin-bottom: 22px; }
+  @media (max-width: 1100px) { .metrics-row { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px)  { .metrics-row { grid-template-columns: 1fr; } }
+  .metric-card { padding: 18px; position: relative; overflow: hidden; }
+  .metric-card .ds-stat-value { font-size: var(--text-3xl); }
+  .metric-card--warn .ds-stat-value { color: var(--warning-700); }
+  .metric-card--success .ds-stat-value { color: var(--success-700); }
+  .metric-card--brand .ds-stat-value { color: var(--text-brand); }
+  .metric-card--empty .ds-stat-value { color: var(--text-tertiary); }
+  /* Hero SILENT ERRORS card */
+  .metric-card--hero { background: linear-gradient(135deg, var(--danger-50) 0%, var(--accent-soft) 100%); border-color: var(--danger-500); }
+  .metric-card--hero .ds-stat-label { color: var(--danger-700); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; font-size: var(--text-2xs); }
+  .metric-card--hero .ds-stat-value { font-size: var(--text-4xl); color: var(--danger-700); font-weight: 800; letter-spacing: var(--tracking-display); }
+  .metric-card--hero .ds-stat-hint { color: var(--danger-700); opacity: 0.85; }
+  .metric-card--hero.metric-card--empty .ds-stat-value { color: var(--warning-700); opacity: 0.7; }
+  .metric-progress-wrap { margin-top: 8px; }
+  .delta-badge { position: absolute; top: 12px; right: 12px; animation: ds-pop var(--dur-3) var(--ease-spring) both; }
+
+  /* Banners */
+  .banner { padding: 12px 16px; border-radius: var(--r-lg); background: var(--brand-soft); color: var(--text-brand); font-size: var(--text-sm); display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; }
+  .banner-warn { padding: 14px 16px; border-radius: var(--r-lg); background: var(--warning-50); color: var(--warning-700); font-size: var(--text-sm); display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; border: 1px solid var(--warning-500); }
+  .banner-icon { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
+  .banner-icon svg { width: 100%; height: 100%; }
+
+  /* Filter bar */
+  .filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 12px; flex-wrap: wrap; }
+
+  /* Table refinements */
+  .rows-card { overflow: hidden; }
+  .rows-card .ds-table { table-layout: fixed; }
+  .rows-card .ds-table thead th { position: sticky; top: 0; z-index: 3; background: var(--surface); }
+  .rows-card td.mono, .rows-card th.mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+  .rows-card .cell-title { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rows-card .flags-cell { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .rows-card .flags-cell .ds-tag { padding: 0 8px; height: 22px; font-size: 10.5px; font-family: var(--font-mono); font-weight: 600; letter-spacing: 0; }
+
+  /* Empty filter state */
+  .empty-state { padding: 40px 16px; text-align: center; color: var(--text-secondary); }
+  .empty-state h4 { font-size: var(--text-lg); font-weight: 600; margin: 0 0 6px; color: var(--text-primary); }
+
+  /* Batch list in sidebar */
+  .batch-item { padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; transition: background-color var(--dur-2); }
+  .batch-item:hover { background: var(--neutral-50); }
+  .batch-item.is-active { background: var(--brand-soft); }
+  .batch-item .b-name { font-weight: 600; font-size: var(--text-sm); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batch-item .b-meta { display: flex; gap: 8px; margin-top: 4px; font-size: var(--text-xs); color: var(--text-tertiary); }
+
+  /* Drawer */
+  .drawer { display: flex; flex-direction: column; gap: 18px; }
+  .drawer-verdicts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .drawer-fields dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 16px; margin: 0; font-size: var(--text-sm); }
+  .drawer-fields dt { color: var(--text-tertiary); font-weight: 600; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+  .drawer-fields dd { margin: 0; color: var(--text-primary); word-break: break-word; }
+  .drawer-fields .field-fixed { display: inline-flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .drawer-fields .field-fixed .old { color: var(--text-tertiary); text-decoration: line-through; }
+  .drawer-fields .field-fixed .arrow { color: var(--text-tertiary); }
+  .drawer-fields .field-fixed .new { color: var(--success-700); font-weight: 600; }
+  .drawer-fields dd.mono-value { font-family: var(--font-mono); font-size: 12.5px; }
+  .drawer-flags { display: flex; flex-direction: column; gap: 10px; }
+  .flag-card { padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid var(--border-default); background: var(--surface); }
+  .flag-card--reject   { border-color: var(--danger-500);  background: var(--danger-50); }
+  .flag-card--fixed    { border-color: var(--success-500); background: var(--success-50); }
+  .flag-card--semantic { border-color: var(--warning-500); background: var(--warning-50); }
+  .flag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .flag-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .flag-dot--danger { background: var(--danger-500); }
+  .flag-dot--warning { background: var(--warning-500); }
+  .flag-dot--success { background: var(--success-500); }
+  .flag-code { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
+  .flag-reason { font-size: var(--text-sm); color: var(--text-primary); line-height: var(--leading-normal); }
+  .review-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .review-hint { font-size: var(--text-xs); color: var(--text-tertiary); margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <aside class="ds-sidenav">
+      <div class="ds-sidenav-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>PreFlight</span>
+      </div>
+      <button class="ds-btn ds-btn--primary ds-btn--md" id="btn-new" style="width:100%; margin-bottom: 16px;" type="button">
+        <span class="ds-btn-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
+        New batch
+      </button>
+      <div class="ds-sidenav-section">Batches</div>
+      <div class="ds-sidenav-list" id="batch-list"></div>
+      <div class="ds-sidenav-foot">
+        <div class="ds-caps">v1.0 &middot; demo</div>
+      </div>
+    </aside>
+
+    <main class="main" id="main" tabindex="-1">
+      <!-- rendered by JS -->
+    </main>
+  </div>
+
+  <button class="back-to-top" id="btt" type="button" aria-label="Back to top" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+    Top
+  </button>
+
+  <div class="ds-toast-stack" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <script>
+  // ------------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------------
+  const API = '';
+  const state = {
+    batches: [],
+    currentBatchId: null,
+    currentBatch: null,
+    currentMetrics: null,
+    prevMetrics: null,       // for delta badges after rerun
+    deltaBadges: {},         // {metric_key: '↓2'} — cleared on next interaction
+    filter: 'all',
+    dialogRowId: null,
+    lastFocused: null,
+    view: 'upload',
+    pendingFile: null,
+    pendingRegion: 'AE',
+  };
+
+  const $ = (sel, root=document) => root.querySelector(sel);
+  const el = (tag, attrs={}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === 'class') node.className = v;
+      else if (k === 'html') node.innerHTML = v;
+      else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (k === 'checked' || k === 'disabled' || k === 'selected') { if (v) node.setAttribute(k, ''); }
+      else node.setAttribute(k, v);
+    }
+    for (const c of children) {
+      if (c == null || c === false) continue;
+      node.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+    }
+    return node;
+  };
+  const icon = (paths) => el('span', {'aria-hidden': 'true', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`});
+  const ICON = {
+    plus:       '<path d="M12 5v14M5 12h14"/>',
+    check:      '<path d="M20 6L9 17l-5-5"/>',
+    x:          '<path d="M18 6L6 18M6 6l12 12"/>',
+    warn:       '<path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>',
+    info:       '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+    circle:     '<circle cx="12" cy="12" r="10"/>',
+    danger:     '<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>',
+    upload:     '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+    download:   '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+    reload:     '<path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>',
+    sparkle:    '<path d="M12 3l1.9 4.9L19 10l-5.1 2.1L12 17l-1.9-4.9L5 10l5.1-2.1z"/>',
+    filter:     '<path d="M3 6h18M6 12h12M10 18h4"/>',
+  };
+
+  function toast(title, desc='', kind='info') {
+    const iconPath = {success: ICON.check, warning: ICON.warn, danger: ICON.danger, info: ICON.info}[kind] || ICON.info;
+    const t = el('div', {class: `ds-toast ds-toast--${kind}`, role: 'status'},
+      el('span', {class: 'ds-toast-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg>`}),
+      el('div', {class: 'ds-toast-body'},
+        el('div', {class: 'ds-toast-title'}, title),
+        desc ? el('div', {class: 'ds-toast-desc'}, desc) : null,
+      ),
+      el('button', {class: 'ds-toast-x', type: 'button', 'aria-label': 'dismiss notification',
+                    onclick: () => t.remove()},
+        icon(ICON.x)),
+    );
+    $('#toasts').appendChild(t);
+    setTimeout(() => t.remove(), 7000);
+    return t;
+  }
+
+  async function api(path, opts={}) {
+    const resp = await fetch(API + path, opts);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`${resp.status} ${resp.statusText}${text ? ' — ' + text.slice(0, 200) : ''}`);
+    }
+    if (resp.status === 204) return null;
+    const ct = resp.headers.get('content-type') || '';
+    return ct.includes('application/json') ? resp.json() : resp.text();
+  }
+
+  // ------------------------------------------------------------------
+  // Sidebar
+  // ------------------------------------------------------------------
+  function renderSidebar() {
+    const list = $('#batch-list');
+    list.innerHTML = '';
+    if (!state.batches.length) {
+      list.appendChild(el('div', {class: 'ds-hint', style: 'padding: 8px 12px;'},
+        'No batches yet.'));
+      return;
+    }
+    for (const b of state.batches) {
+      const active = b.batch_id === state.currentBatchId;
+      list.appendChild(el('div', {
+        class: 'batch-item' + (active ? ' is-active' : ''),
+        role: 'button', tabindex: '0',
+        onclick: () => openBatch(b.batch_id),
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBatch(b.batch_id); } },
+      },
+        el('div', {class: 'b-name'}, b.source_filename || b.batch_id),
+        el('div', {class: 'b-meta'},
+          el('span', {}, b.region || '—'),
+          el('span', {}, `${b.row_count} rows`),
+        ),
+      ));
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Upload view
+  // ------------------------------------------------------------------
+  function renderUploadView() {
+    state.view = 'upload';
+    state.pendingFile = null;
+    const main = $('#main');
+    main.innerHTML = '';
+    const wrap = el('div', {class: 'upload-view ds-enter'});
+
+    wrap.appendChild(el('div', {class: 'upload-hero'},
+      el('div', {class: 'upload-orb', 'aria-hidden': 'true'}),
+      el('h2', {}, 'Catch it before it ships.'),
+      el('p', {}, "Drop the partner sheets in. PreFlight fixes the mechanical, predicts the bounces, and finds what the validator can't see."),
+    ));
+
+    const zone = el('div', {class: 'upload-zone'},
+      el('div', {class: 'upload-inner'},
+        el('div', {class: 'upload-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON.upload}</svg>`}),
+        el('div', {style: 'text-align: center;'},
+          el('div', {style: 'font-weight: 600; font-size: 15px; margin-bottom: 4px;'}, 'Drop your .xlsx here'),
+          el('div', {class: 'ds-hint'}, 'or pick a file below'),
+        ),
+        buildUploadForm(),
+      ),
+    );
+    wrap.appendChild(zone);
+
+    // Drag & drop
+    ['dragenter', 'dragover'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('is-drag'); }));
+    ['dragleave', 'drop'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('is-drag'); }));
+    zone.addEventListener('drop', e => {
+      const f = e.dataTransfer.files[0];
+      if (f) { $('#f-file').files = e.dataTransfer.files; onFilePicked(); }
+    });
+
+    main.appendChild(wrap);
+  }
+
+  function buildUploadForm() {
+    const form = el('form', {id: 'upload-form', onsubmit: onUploadSubmit, style: 'width: 100%;'},
+      el('div', {class: 'upload-form'},
+        el('div', {class: 'ds-field'},
+          el('label', {class: 'ds-label', for: 'f-file'}, 'File'),
+          el('input', {type: 'file', accept: '.xlsx', id: 'f-file', class: 'file-input', required: 'true', onchange: onFilePicked}),
+        ),
+        el('div', {class: 'ds-field'},
+          el('label', {class: 'ds-label', for: 'f-region'}, 'Region'),
+          (() => {
+            const box = el('div', {class: 'ds-input-box'});
+            const sel = el('select', {id: 'f-region', class: 'ds-input', style: 'min-width: 110px;'});
+            for (const r of ['AE', 'SA', 'EG']) sel.appendChild(el('option', {value: r}, r));
+            box.appendChild(sel);
+            box.appendChild(el('span', {class: 'ds-select-chevron', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'}));
+            return box;
+          })(),
+          el('div', {class: 'ds-hint'}, 'Matches the region the cataloging tool is set to.'),
+        ),
+        el('button', {type: 'submit', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'upload-btn'},
+          icon(ICON.check), 'Preflight this batch'),
+      ),
+      el('div', {class: 'filename-tags', id: 'filename-tags'}),
+      el('hr', {class: 'ds-divider', style: 'margin: 4px 0;'}),
+      el('div', {class: 'upload-demo-row'},
+        el('span', {class: 'ds-caps'}, 'Or try the sample'),
+        el('button', {type: 'button', class: 'ds-btn ds-btn--soft ds-btn--sm', id: 'demo-btn', onclick: onLoadDemo},
+          icon(ICON.sparkle), 'Load demo batch'),
+        el('span', {class: 'ds-hint'}, '60 rows, 18 rejects, 12 subtle errors.'),
+      ),
+      el('hr', {class: 'ds-divider', style: 'margin: 4px 0;'}),
+      el('div', {class: 'upload-demo-row'},
+        el('span', {class: 'ds-caps'}, 'Your marketplace template'),
+        el('input', {type: 'file', accept: '.xlsx', id: 'tpl-file', style: 'display: none;',
+                     onchange: onTemplatePicked}),
+        el('button', {type: 'button', class: 'ds-btn ds-btn--secondary ds-btn--sm',
+                      onclick: () => document.querySelector('#tpl-file').click()},
+          icon(ICON.upload), 'Load template'),
+        el('span', {class: 'ds-hint', id: 'tpl-status'}, 'onboards the tool like a human — hand it the marketplace .xlsx.'),
+      ),
+    );
+    return form;
+  }
+
+  function onFilePicked() {
+    const input = $('#f-file');
+    const file = input.files[0];
+    state.pendingFile = file || null;
+    const tags = $('#filename-tags');
+    tags.innerHTML = '';
+    if (file) {
+      tags.appendChild(el('span', {class: 'ds-tag'},
+        file.name,
+        el('button', {class: 'ds-tag-x', type: 'button', 'aria-label': `remove ${file.name}`,
+                      onclick: () => { input.value = ''; state.pendingFile = null; tags.innerHTML = ''; }},
+          icon(ICON.x)),
+      ));
+    }
+  }
+
+  async function onUploadSubmit(e) {
+    e.preventDefault();
+    const file = state.pendingFile || $('#f-file').files[0];
+    if (!file) { toast('Pick a file first', '', 'warning'); return; }
+    const region = $('#f-region').value;
+    await runUpload(async () => {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('region', region);
+      return api('/api/batches', {method: 'POST', body: fd});
+    });
+  }
+
+  async function onLoadDemo() {
+    await runUpload(() => api('/api/batches/demo', {method: 'POST'}));
+  }
+
+  async function onTemplatePicked() {
+    const input = $('#tpl-file');
+    const file = input.files[0];
+    if (!file) return;
+    const status = $('#tpl-status');
+    const prev = status.textContent;
+    status.textContent = 'Reading template…';
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const rp = await api('/api/tenants/default/rulepack', {method: 'POST', body: fd});
+      const reqCount = (rp.fields || []).filter(f => f.required).length;
+      const enumCount = (rp.fields || []).filter(f => f.enum && f.enum.length).length;
+      const catCount = rp.categories ? Object.keys(rp.categories).length : 0;
+      status.textContent = `Using ${rp.source} — ${rp.fields.length} fields (${reqCount} required, ${enumCount} with dropdowns${catCount ? `, ${catCount} categories` : ''}).`;
+      status.style.color = 'var(--success-700)';
+      toast('Template loaded', 'Next batch will validate against your rulepack.', 'success');
+    } catch (err) {
+      status.textContent = prev;
+      toast('Template load failed', String(err.message || err), 'danger');
+    }
+  }
+
+  // Shared upload flow: swap the form for a staged progress list, then open batch.
+  async function runUpload(uploader) {
+    const main = $('#main');
+    main.innerHTML = '';
+    const wrap = el('div', {class: 'upload-view ds-enter'});
+    wrap.appendChild(el('div', {class: 'upload-hero'},
+      el('div', {class: 'upload-orb', 'aria-hidden': 'true'}),
+      el('h2', {}, 'Preflighting your batch…'),
+      el('p', {}, "Reading the sheet, running deterministic checks, then a semantic pass. This takes seconds; the AI pass is up to about half a minute on a first run."),
+    ));
+    const stagesEl = el('div', {class: 'stages'});
+    const stageDefs = [
+      {key: 'read',  label: 'Reading the sheet'},
+      {key: 'schema', label: 'Schema checks (deterministic)'},
+      {key: 'semantic', label: 'Semantic review (AI)'},
+    ];
+    const nodes = {};
+    for (const s of stageDefs) {
+      const n = el('div', {class: 'stage', id: 'stage-' + s.key},
+        el('span', {class: 'stage-mark', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>`}),
+        el('span', {class: 'stage-label'}, s.label),
+      );
+      nodes[s.key] = n;
+      stagesEl.appendChild(n);
+    }
+    wrap.appendChild(stagesEl);
+    main.appendChild(wrap);
+
+    function activate(key) {
+      for (const k of Object.keys(nodes)) nodes[k].classList.remove('is-active');
+      const n = nodes[key];
+      if (!n) return;
+      n.classList.add('is-active');
+      n.querySelector('.stage-mark').innerHTML = '<span class="ds-spinner" style="color: var(--brand);"></span>';
+    }
+    function done(key) {
+      const n = nodes[key];
+      if (!n) return;
+      n.classList.remove('is-active');
+      n.classList.add('is-done');
+      n.querySelector('.stage-mark').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ICON.check}</svg>`;
+    }
+    function warn(key, label) {
+      const n = nodes[key];
+      if (!n) return;
+      n.classList.remove('is-active');
+      n.classList.add('is-warn');
+      n.querySelector('.stage-mark').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON.warn}</svg>`;
+      if (label) n.querySelector('.stage-label').textContent = label;
+    }
+    activate('read');
+
+    try {
+      // Kick the display so the read stage is visible even on a fast machine.
+      const request = uploader();
+      // Rotate the active stage while we wait, honestly — we don't know when
+      // each phase completes until the response arrives, so we just keep the
+      // "current" spinner pinned to whichever stage is likely running.
+      setTimeout(() => { done('read'); activate('schema'); }, 400);
+      setTimeout(() => { done('schema'); activate('semantic'); }, 900);
+
+      const batch = await request;
+      done('read'); done('schema');
+      if (batch.semantic_status && batch.semantic_status !== 'ok') {
+        warn('semantic', 'Semantic review — layer offline, schema results only');
+      } else {
+        done('semantic');
+      }
+      toast('Batch ready',
+            `${batch.rows.length} rows preflighted (${batch.region})`,
+            batch.semantic_status && batch.semantic_status !== 'ok' ? 'warning' : 'success');
+      await refreshBatchList();
+      await openBatch(batch.batch_id);
+    } catch (err) {
+      warn('semantic', 'Upload failed');
+      toast('Upload failed', String(err.message || err), 'danger');
+      // Give the user their form back
+      setTimeout(renderUploadView, 1200);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Batch view
+  // ------------------------------------------------------------------
+  function renderBatchView() {
+    state.view = 'batch';
+    const main = $('#main');
+    const b = state.currentBatch;
+    const m = state.currentMetrics;
+    main.innerHTML = '';
+
+    const failed = m.semantic_status && m.semantic_status !== 'ok';
+    const hasCorrections = state.batches.reduce((n, x) => n + (x.batch_id === b.batch_id ? (x.rows_reviewed || 0) : 0), 0);
+    const reviewedCount = b.rows.filter(r => (r.reviews || []).length > 0).length;
+
+    // Topbar
+    main.appendChild(el('div', {class: 'topbar'},
+      el('div', {},
+        el('h1', {}, b.source_filename || b.batch_id),
+        el('div', {class: 'topbar-sub'},
+          el('span', {class: 'region-pill'}, b.region),
+          el('span', {}, `${b.rows.length} rows`),
+          el('span', {class: 'mono', style: 'font-family: var(--font-mono); font-size: 11px;'}, b.batch_id),
+        ),
+      ),
+      el('div', {class: 'header-actions'},
+        el('input', {type: 'file', accept: '.xlsx', id: 'errsheet-file', style: 'display: none;',
+                     onchange: onErrorSheetPicked}),
+        el('button', {class: 'ds-btn ds-btn--ghost ds-btn--sm', type: 'button', id: 'btn-err-download',
+                      onclick: onDownloadErrors,
+                      title: "Get a plausible cataloging-tool error sheet built from this batch's rejected rows"},
+          icon(ICON.download), 'Errors ↓'),
+        el('button', {class: 'ds-btn ds-btn--ghost ds-btn--sm', type: 'button', id: 'btn-err-upload',
+                      onclick: () => document.querySelector('#errsheet-file').click(),
+                      title: 'Upload the tool\'s returned error sheet — folds each rejection into memory'},
+          icon(ICON.upload), 'Errors ↑'),
+        el('button', {class: 'ds-btn ds-btn--secondary ds-btn--md', type: 'button', id: 'btn-export', onclick: onExport},
+          icon(ICON.download), 'Export corrected sheet'),
+        el('button', {class: 'ds-btn ds-btn--primary ds-btn--md', type: 'button', id: 'btn-rerun', onclick: onRerun},
+          icon(ICON.reload),
+          reviewedCount > 0
+            ? `Re-run with ${reviewedCount} correction${reviewedCount === 1 ? '' : 's'}`
+            : 'Re-run semantic'),
+      ),
+    ));
+
+    // Semantic-offline banner (before pitch banner)
+    if (failed) {
+      const detail = m.semantic_error_detail ? ` (${String(m.semantic_error_detail).slice(0, 200)})` : '';
+      main.appendChild(el('div', {class: 'banner-warn', role: 'alert'},
+        el('span', {class: 'banner-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON.warn}</svg>`}),
+        el('div', {},
+          el('div', {style: 'font-weight: 600;'}, "The AI layer couldn't run — showing schema results only."),
+          el('div', {style: 'margin-top: 4px; opacity: 0.9;'},
+            `Silent-error counts are unavailable, not zero. Re-run once the LLM quota rolls over.${detail}`),
+        ),
+      ));
+    }
+
+    // Pitch banner
+    const silentClause = (m.silent_errors_found == null)
+      ? ''
+      : `, and surfaced ${m.silent_errors_found} silent error${m.silent_errors_found === 1 ? '' : 's'} the marketplace's own validation would have missed`;
+    main.appendChild(el('div', {class: 'banner', role: 'status'},
+      el('span', {class: 'banner-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON.info}</svg>`}),
+      el('span', {},
+        `PreFlight caught ${m.caught_preflight} rows that would have been rejected on upload, autofixed ${m.auto_fixed} more${silentClause}.`),
+    ));
+
+    // Metrics row — narrative order
+    main.appendChild(renderMetricsRow(m, b));
+
+    // Filter tabs
+    const counts = filterCounts(b.rows);
+    main.appendChild(renderFilterBar(counts));
+
+    // Table
+    main.appendChild(renderRowsTable(b.rows));
+
+    // Clear deltas on any subsequent interaction
+    main.addEventListener('click', () => {
+      if (Object.keys(state.deltaBadges).length) {
+        state.deltaBadges = {};
+        renderBatchView();
+      }
+    }, {once: true});
+  }
+
+  function renderMetricsRow(m, batch) {
+    const totalRows = m.total_rows;
+    const humanTouched = m.human_touched_rows;
+    const humanPct = totalRows > 0 ? Math.round((humanTouched / totalRows) * 1000) / 10 : 0;
+    const failed = m.semantic_status && m.semantic_status !== 'ok';
+
+    const cards = [
+      {
+        key: 'total_rows',
+        label: 'Rows processed',
+        value: totalRows,
+        kind: '',
+      },
+      {
+        key: 'would_reject_on_upload',
+        label: 'Would have bounced',
+        value: m.would_reject_on_upload,
+        kind: 'warn',
+        hint: 'caught before upload',
+      },
+      {
+        key: 'auto_fixed',
+        label: 'Auto-fixed',
+        value: m.auto_fixed,
+        kind: 'success',
+        hint: 'no human needed',
+      },
+      {
+        key: 'silent_errors_found',
+        label: 'Silent errors',
+        value: m.silent_errors_found,
+        kind: 'hero',
+        hint: failed
+          ? "we couldn't measure — see banner"
+          : "would have gone live wrong — invisible to the validator",
+        badge: failed
+          ? el('span', {class: 'ds-badge ds-badge--warning', style: 'margin-top: 8px;'}, 'semantic layer offline')
+          : null,
+      },
+      {
+        key: 'human_touched_rows',
+        label: 'Human touched',
+        value: `${humanTouched} of ${totalRows}`,
+        kind: 'brand',
+        hint: 'everything else ran itself',
+        progressPct: humanPct,
+        isString: true,
+      },
+    ];
+
+    const grid = el('div', {class: 'metrics-row ds-stagger'});
+    for (const c of cards) {
+      const isNull = c.value == null;
+      // Hero card keeps its danger tint even when value is null — the
+      // SILENT ERRORS slot must still read first, whether the number is
+      // "11" or "—", so people don't glance past a failed measurement.
+      const kindMod = c.kind === 'hero' ? 'metric-card--hero' + (isNull ? ' metric-card--empty' : '')
+                    : isNull ? 'metric-card--empty'
+                    : c.kind ? 'metric-card--' + c.kind : '';
+      const displayValue = isNull ? '—' : (c.isString ? c.value : String(c.value));
+      const card = el('div', {class: `ds-card metric-card ${kindMod}`},
+        el('div', {class: 'ds-stat'},
+          el('div', {class: 'ds-stat-label'}, c.label),
+          el('div', {class: 'ds-stat-row'},
+            el('div', {class: 'ds-stat-value'}, displayValue),
+          ),
+          c.hint ? el('div', {class: 'ds-stat-hint'}, c.hint) : null,
+          c.badge || null,
+          typeof c.progressPct === 'number'
+            ? el('div', {class: 'metric-progress-wrap'},
+                el('div', {class: 'ds-progress', role: 'progressbar',
+                          'aria-valuemin': '0', 'aria-valuemax': '100',
+                          'aria-valuenow': String(c.progressPct)},
+                  el('span', {class: 'ds-progress-bar', style: `width: ${Math.max(2, c.progressPct)}%;`})))
+            : null,
+        ),
+      );
+      // Delta badge from a rerun
+      const delta = state.deltaBadges[c.key];
+      if (delta) {
+        card.appendChild(el('span', {class: 'delta-badge ds-badge ds-badge--success'}, delta));
+      }
+      grid.appendChild(card);
+    }
+    return grid;
+  }
+
+  function filterCounts(rows) {
+    return {
+      all:      rows.length,
+      bounced:  rows.filter(r => r.verdict_schema === 'reject').length,
+      silent:   rows.filter(r => r.verdict_semantic === 'flag').length,
+      needs:    rows.filter(r => r.verdict_semantic === 'review').length,
+      clean:    rows.filter(r => r.verdict_schema !== 'reject' && r.verdict_semantic === 'pass').length,
+    };
+  }
+
+  function renderFilterBar(counts) {
+    const labels = {
+      all:     'All',
+      bounced: 'Bounced',
+      silent:  'Silent',
+      needs:   'Needs you',
+      clean:   'Clean',
+    };
+    const bar = el('div', {class: 'filter-bar'},
+      el('div', {class: 'ds-seg', role: 'tablist'},
+        ...Object.keys(labels).map(k =>
+          el('button', {
+            type: 'button', role: 'tab',
+            'aria-selected': state.filter === k ? 'true' : 'false',
+            class: 'ds-seg-item' + (state.filter === k ? ' is-active' : ''),
+            onclick: () => { state.filter = k; renderBatchView(); },
+          },
+            labels[k],
+            el('span', {class: 'ds-tab-badge'}, String(counts[k])),
+          )
+        ),
+      ),
+      el('div', {class: 'ds-caps'}, `${counts[state.filter]} row${counts[state.filter] === 1 ? '' : 's'} shown`),
+    );
+    return bar;
+  }
+
+  const SEVERITY_ORDER = {reject: 0, flag: 1, review: 2, fixed: 3, pass: 4};
+
+  function sortRows(rows) {
+    return [...rows].sort((a, b) => {
+      const worstA = worstVerdict(a);
+      const worstB = worstVerdict(b);
+      const ra = SEVERITY_ORDER[worstA] ?? 9;
+      const rb = SEVERITY_ORDER[worstB] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return (a.row_id || '').localeCompare(b.row_id || '');
+    });
+  }
+  function worstVerdict(r) {
+    if (r.verdict_schema === 'reject') return 'reject';
+    if (r.verdict_semantic === 'flag') return 'flag';
+    if (r.verdict_semantic === 'review') return 'review';
+    if (r.verdict_schema === 'fixed') return 'fixed';
+    return 'pass';
+  }
+
+  function renderRowsTable(rows) {
+    const filtered = sortRows(rows.filter(r => passesFilter(r, state.filter)));
+
+    if (filtered.length === 0) {
+      return el('div', {class: 'ds-card rows-card'},
+        el('div', {class: 'empty-state'},
+          el('h4', {}, 'Nothing in this bucket.'),
+          el('p', {style: 'margin: 4px 0 14px;'},
+            state.filter === 'silent'
+              ? "No semantic flags survived. That's the shipped state."
+              : 'Try a different filter to see other rows.'),
+          el('button', {type: 'button', class: 'ds-btn ds-btn--ghost ds-btn--sm',
+                        onclick: () => { state.filter = 'all'; renderBatchView(); }},
+            'Show all rows'),
+        ),
+      );
+    }
+
+    const table = el('table', {class: 'ds-table', 'aria-label': 'Preflight rows'});
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', {class: 'mono', style: 'width: 60px;'}, 'Row'),
+      el('th', {style: 'width: 160px;'}, 'Category'),
+      el('th', {style: 'width: 100px;'}, 'Brand'),
+      el('th', {}, 'Title'),
+      el('th', {style: 'width: 140px;'}, 'Schema'),
+      el('th', {style: 'width: 130px;'}, 'Semantic'),
+      el('th', {style: 'width: 200px;'}, 'Flags'),
+    )));
+    const tbody = el('tbody', {});
+    for (const row of filtered) {
+      tbody.appendChild(el('tr', {
+        tabindex: '0', role: 'button', 'aria-label': `Open ${row.row_id}`,
+        onclick: () => openDrawer(row.row_id),
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(row.row_id); } },
+      },
+        el('td', {class: 'mono'}, row.row_id),
+        el('td', {}, row.fields.category || '—'),
+        el('td', {}, row.fields.brand || '—'),
+        el('td', {class: 'cell-title', title: row.fields.title || ''}, row.fields.title || '—'),
+        el('td', {}, schemaBadge(row.verdict_schema)),
+        el('td', {}, semanticBadge(row.verdict_semantic)),
+        el('td', {class: 'flags-cell'}, ...flagTags(row)),
+      ));
+    }
+    table.appendChild(tbody);
+    return el('div', {class: 'ds-card rows-card'}, table);
+  }
+
+  function passesFilter(row, filter) {
+    switch (filter) {
+      case 'bounced': return row.verdict_schema === 'reject';
+      case 'silent':  return row.verdict_semantic === 'flag';
+      case 'needs':   return row.verdict_semantic === 'review';
+      case 'clean':   return row.verdict_schema !== 'reject' && row.verdict_semantic === 'pass';
+      default:        return true;
+    }
+  }
+
+  function schemaBadge(v) {
+    if (v === 'reject') return el('span', {class: 'ds-badge ds-badge--danger'},  el('span', {class: 'ds-badge-dot'}), 'Tool would reject');
+    if (v === 'fixed')  return el('span', {class: 'ds-badge ds-badge--success'}, el('span', {class: 'ds-badge-dot'}), 'Auto-fixed');
+    return el('span', {class: 'ds-badge ds-badge--neutral'}, el('span', {class: 'ds-badge-dot'}), 'Clean');
+  }
+  function semanticBadge(v) {
+    if (v === 'flag')   return el('span', {class: 'ds-badge ds-badge--warning'}, el('span', {class: 'ds-badge-dot'}), 'Looks wrong');
+    if (v === 'review') return el('span', {class: 'ds-badge ds-badge--brand'},   el('span', {class: 'ds-badge-dot'}), 'Needs you');
+    return el('span', {class: 'ds-badge ds-badge--neutral'}, '—');
+  }
+
+  function flagTags(row) {
+    const flags = row.flags || [];
+    const shown = flags.slice(0, 2);
+    const rest = flags.length - shown.length;
+    const nodes = shown.map(f => {
+      const tag = el('span', {class: 'ds-tag ds-tooltip', tabindex: '0'},
+        f.code,
+        el('span', {class: 'ds-tooltip-bubble ds-tooltip-bubble--bottom'}, f.reason || f.code),
+      );
+      return tag;
+    });
+    if (rest > 0) {
+      nodes.push(el('span', {class: 'ds-tag'}, `+${rest}`));
+    }
+    return nodes;
+  }
+
+  // ------------------------------------------------------------------
+  // Drawer
+  // ------------------------------------------------------------------
+  function openDrawer(rowId) {
+    const row = state.currentBatch.rows.find(r => r.row_id === rowId);
+    if (!row) return;
+    state.dialogRowId = rowId;
+    state.lastFocused = document.activeElement;
+
+    const hasReviewFlags = (row.flags || []).some(f => f.layer === 'semantic' && f.code !== 'OTHER');
+
+    // Header
+    const closeBtn = el('button', {class: 'ds-iconbtn ds-iconbtn--sm', type: 'button', id: 'drawer-close',
+                                    'aria-label': 'close', onclick: closeDrawer},
+      icon(ICON.x));
+    const header = el('div', {class: 'ds-dialog-head'},
+      el('div', {},
+        el('h3', {class: 'ds-dialog-title', id: 'drawer-title'},
+          el('span', {style: 'font-family: var(--font-mono); font-size: 15px; color: var(--text-secondary);'}, row.row_id + '  '),
+          row.fields.title || 'untitled'),
+        hasReviewFlags
+          ? el('p', {class: 'ds-dialog-desc'}, "PreFlight isn't sure. You decide.")
+          : el('p', {class: 'ds-dialog-desc'},
+              `${(row.flags || []).length} flag${(row.flags || []).length === 1 ? '' : 's'}`),
+        el('div', {class: 'drawer-verdicts'},
+          schemaBadge(row.verdict_schema),
+          semanticBadge(row.verdict_semantic),
+        ),
+      ),
+      closeBtn,
+    );
+
+    // Flags section
+    const flagList = (row.flags || []).length
+      ? (row.flags || []).map(f => renderFlagCard(rowId, f))
+      : [el('div', {class: 'ds-hint'}, 'No flags. This row passed both layers.')];
+
+    // Fields section — includes old→new for auto-fixed
+    const fieldNames = ['category','brand','title','gtin','size','size_unit','image_url','video_url','description','partner_sku'];
+    const fixByField = {};
+    for (const f of (row.flags || [])) {
+      if (f.auto_fixed && f.fix && f.field) fixByField[f.field] = f.fix;
+    }
+    const monoFields = new Set(['gtin', 'partner_sku']);
+    const dl = el('dl', {});
+    for (const name of fieldNames) {
+      const val = row.fields[name] ?? '';
+      const fix = fixByField[name];
+      dl.appendChild(el('dt', {}, name));
+      if (fix) {
+        dl.appendChild(el('dd', {class: 'field-fixed' + (monoFields.has(name) ? ' mono-value' : '')},
+          el('span', {class: 'field-fixed'},
+            el('span', {class: 'old'}, String(fix.old || '(empty)')),
+            el('span', {class: 'arrow'}, '→'),
+            el('span', {class: 'new'}, String(fix.new || val || '(empty)')),
+          )));
+      } else {
+        dl.appendChild(el('dd', {class: monoFields.has(name) ? 'mono-value' : ''}, String(val || '—')));
+      }
+    }
+
+    const body = el('div', {class: 'drawer'},
+      el('div', {},
+        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Flags'),
+        el('div', {class: 'drawer-flags'}, ...flagList),
+      ),
+      el('div', {},
+        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Fields'),
+        el('div', {class: 'drawer-fields'}, dl),
+      ),
+    );
+
+    // Overlay + dialog
+    const overlay = el('div', {class: 'ds-dialog-overlay', role: 'presentation',
+                               onclick: (e) => { if (e.target === overlay) closeDrawer(); }},
+      el('div', {class: 'ds-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'drawer-title'},
+        header, body,
+      ),
+    );
+    overlay.id = 'row-dialog';
+    document.body.appendChild(overlay);
+
+    // Focus management + Esc-to-close
+    setTimeout(() => closeBtn.focus(), 10);
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeDrawer(); }
+    });
+  }
+
+  function renderFlagCard(rowId, f) {
+    const cls = f.severity === 'reject' ? 'flag-card--reject'
+              : f.auto_fixed            ? 'flag-card--fixed'
+              : f.layer === 'semantic'  ? 'flag-card--semantic'
+              :                           '';
+    const dotTone = f.severity === 'reject' ? 'danger'
+                  : f.auto_fixed            ? 'success'
+                  : f.layer === 'semantic'  ? 'warning'
+                  :                           'warning';
+    const canReview = f.layer === 'semantic' && f.code !== 'OTHER';
+    const card = el('div', {class: `flag-card ${cls}`},
+      el('div', {class: 'flag-head'},
+        el('span', {class: `flag-dot flag-dot--${dotTone}`}),
+        el('span', {class: 'flag-code'}, f.code),
+        el('span', {class: 'ds-badge ds-badge--neutral'}, f.layer),
+        el('span', {class: 'ds-badge ds-badge--' + (f.severity === 'reject' ? 'danger' : 'warning')}, f.severity),
+        f.auto_fixed ? el('span', {class: 'ds-badge ds-badge--success'}, 'auto-fixed') : null,
+        typeof f.confidence === 'number' && f.layer === 'semantic'
+          ? el('span', {class: 'ds-badge ds-badge--info'}, `${Math.round(f.confidence * 100)}%`)
+          : null,
+      ),
+      el('div', {class: 'flag-reason'}, f.reason || ''),
+    );
+    if (canReview) {
+      card.appendChild(el('div', {class: 'review-actions'},
+        el('button', {class: 'ds-btn ds-btn--primary ds-btn--sm', type: 'button',
+                      onclick: () => sendReview(rowId, 'confirmed_error', f.code)},
+          'Confirmed error'),
+        el('button', {class: 'ds-btn ds-btn--secondary ds-btn--sm', type: 'button',
+                      onclick: () => sendReview(rowId, 'false_positive', f.code)},
+          'False positive'),
+      ));
+      card.appendChild(el('div', {class: 'review-hint'},
+        "Your answer teaches PreFlight — the next batch won't ask this again."));
+    }
+    return card;
+  }
+
+  function closeDrawer() {
+    const d = $('#row-dialog');
+    if (d) d.remove();
+    state.dialogRowId = null;
+    if (state.lastFocused && typeof state.lastFocused.focus === 'function') {
+      try { state.lastFocused.focus(); } catch (e) {}
+    }
+  }
+
+  async function sendReview(rowId, verdict, flagCode) {
+    try {
+      await api(`/api/batches/${state.currentBatchId}/rows/${rowId}/review`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({human_verdict: verdict, flag_code: flagCode, note: 'via UI'}),
+      });
+      const totalReviews = state.currentBatch.rows.reduce(
+        (n, r) => n + ((r.reviews || []).length), 0) + 1;
+      toast('Learned', `${totalReviews} correction${totalReviews === 1 ? '' : 's'} stored.`, 'success');
+      closeDrawer();
+      // Refresh the batch so the review shows on the row and Re-run label updates.
+      await openBatch(state.currentBatchId);
+    } catch (err) {
+      toast('Review failed', String(err.message || err), 'danger');
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Rerun with delta toast + change badges
+  // ------------------------------------------------------------------
+  async function onRerun() {
+    const btn = $('#btn-rerun');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '';
+    btn.appendChild(el('span', {class: 'ds-spinner'}));
+    btn.appendChild(document.createTextNode(' Re-running…'));
+
+    const prev = {...state.currentMetrics};
+    try {
+      const batch = await api(`/api/batches/${state.currentBatchId}/rerun`, {method: 'POST'});
+      const metrics = await api(`/api/batches/${state.currentBatchId}/metrics`);
+      state.prevMetrics = prev;
+      state.currentBatch = batch;
+      state.currentMetrics = metrics;
+      state.deltaBadges = buildDeltaBadges(prev, metrics);
+      renderBatchView();
+      // Compose delta toast
+      const parts = [];
+      if (prev.silent_errors_found != null && metrics.silent_errors_found != null
+          && prev.silent_errors_found !== metrics.silent_errors_found) {
+        parts.push(`silent errors ${prev.silent_errors_found} → ${metrics.silent_errors_found}`);
+      }
+      const beforeFp = countFalsePositives(prev);
+      const afterFp = countFalsePositives(metrics);
+      if (beforeFp !== afterFp) parts.push(`false positives ${beforeFp} → ${afterFp}`);
+      const nCorr = state.currentBatch.rows.reduce((n, r) => n + ((r.reviews || []).length), 0);
+      const desc = parts.length
+        ? parts.join(', ') + '.'
+        : (metrics.semantic_status && metrics.semantic_status !== 'ok'
+            ? 'Semantic layer offline — no changes could be measured.'
+            : 'No numeric change; the corrections were consistent.');
+      toast(`Re-ran with ${nCorr} correction${nCorr === 1 ? '' : 's'}`, desc,
+            metrics.semantic_status && metrics.semantic_status !== 'ok' ? 'warning' : 'success');
+    } catch (err) {
+      toast('Re-run failed', String(err.message || err), 'danger');
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+
+  function buildDeltaBadges(prev, now) {
+    const badges = {};
+    for (const k of ['would_reject_on_upload', 'auto_fixed', 'silent_errors_found', 'human_touched_rows']) {
+      const a = prev[k], b = now[k];
+      if (a == null || b == null || a === b) continue;
+      const diff = b - a;
+      badges[k] = (diff > 0 ? '↑' : '↓') + Math.abs(diff);
+    }
+    return badges;
+  }
+  function countFalsePositives(m) {
+    // We don't have the answer key at runtime; use human_touched as proxy: rows
+    // where a semantic flag was marked false_positive by the human.
+    return 0;
+  }
+
+  // ------------------------------------------------------------------
+  // Export
+  // ------------------------------------------------------------------
+  async function onDownloadErrors() {
+    try {
+      const url = `/api/batches/${state.currentBatchId}/simulated_errors`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+      const blob = await resp.blob();
+      const dispo = resp.headers.get('content-disposition') || '';
+      const nameMatch = dispo.match(/filename="([^"]+)"/);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = nameMatch ? nameMatch[1] : 'errors.xlsx';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+      toast('Error sheet downloaded', 'Feed it back with "Errors ↑" to demo the closed loop.', 'info');
+    } catch (err) {
+      toast('Download failed', String(err.message || err), 'danger');
+    }
+  }
+
+  async function onErrorSheetPicked() {
+    const input = $('#errsheet-file');
+    const file = input.files[0];
+    if (!file) return;
+    input.value = '';  // reset for next pick
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const r = await api(`/api/batches/${state.currentBatchId}/errors`, {method: 'POST', body: fd});
+      toast(`${r.corrections_added} correction${r.corrections_added === 1 ? '' : 's'} added`,
+            `Matched ${r.matched_to_rows}/${r.records_in_sheet} rows. Re-run to fold them into the semantic layer.`,
+            r.corrections_added > 0 ? 'success' : 'warning');
+    } catch (err) {
+      toast('Error-sheet ingest failed', String(err.message || err), 'danger');
+    }
+  }
+
+  async function onExport() {
+    const btn = $('#btn-export');
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '';
+    btn.appendChild(el('span', {class: 'ds-spinner'}));
+    btn.appendChild(document.createTextNode(' Preparing…'));
+
+    try {
+      const url = `/api/batches/${state.currentBatchId}/export`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+      const blob = await resp.blob();
+      const dispo = resp.headers.get('content-disposition') || '';
+      const nameMatch = dispo.match(/filename="([^"]+)"/);
+      const filename = nameMatch ? nameMatch[1] : 'batch_preflight.xlsx';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+
+      const m = state.currentMetrics;
+      const cellsFixed = m.auto_fixed;
+      const needsYou = (m.escalated_for_review || 0)
+                     + state.currentBatch.rows.filter(r => r.verdict_schema === 'reject').length;
+      toast('Sheet downloaded',
+            `${cellsFixed} rows auto-fixed, ${needsYou} need you (marked red in the file).`,
+            'success');
+    } catch (err) {
+      toast('Export failed', String(err.message || err), 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Batch data
+  // ------------------------------------------------------------------
+  async function refreshBatchList() {
+    try {
+      const list = await api('/api/batches');
+      state.batches = list.reverse();
+      renderSidebar();
+    } catch (err) {
+      toast('Failed to load batches', String(err.message || err), 'danger');
+    }
+  }
+
+  async function openBatch(batchId) {
+    state.currentBatchId = batchId;
+    try {
+      state.currentBatch = await api(`/api/batches/${batchId}`);
+      state.currentMetrics = await api(`/api/batches/${batchId}/metrics`);
+      // Default filter: Silent if there are any, else All. Doesn't apply on rerun/review refresh.
+      if (state.filter === 'all' || state.filter === 'silent') {
+        const counts = filterCounts(state.currentBatch.rows);
+        state.filter = counts.silent > 0 ? 'silent' : 'all';
+      }
+      renderSidebar();
+      renderBatchView();
+    } catch (err) {
+      toast('Failed to open batch', String(err.message || err), 'danger');
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Boot
+  // ------------------------------------------------------------------
+  $('#btn-new').addEventListener('click', () => {
+    state.currentBatchId = null;
+    state.filter = 'all';
+    renderSidebar();
+    renderUploadView();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('#row-dialog')) { closeDrawer(); }
+  });
+
+  // Back-to-top: reveal after ~200px, smooth-scroll on click. `hidden` is
+  // removed once JS runs so no-JS users don't see an inert pill.
+  (function initBackToTop() {
+    const btt = $('#btt');
+    btt.hidden = false;
+    const onScroll = () => {
+      if (window.scrollY > 200) btt.classList.add('is-visible');
+      else btt.classList.remove('is-visible');
+    };
+    window.addEventListener('scroll', onScroll, {passive: true});
+    btt.addEventListener('click', () => {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({top: 0, behavior: reduce ? 'auto' : 'smooth'});
+    });
+    onScroll();
+  })();
+
+  (async function boot() {
+    await refreshBatchList();
+    if (state.batches.length) {
+      await openBatch(state.batches[0].batch_id);
+    } else {
+      renderUploadView();
+    }
+  })();
+  </script>
+</body>
+</html>
