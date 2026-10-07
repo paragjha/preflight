@@ -159,6 +159,29 @@ thing that ever makes a network call, and it's off by default.
 | `GEMINI_API_KEY` | — | only read when the engine is `llm` or `both` |
 | `PREFLIGHT_DEMO_ONLY` | off | disable uploads; demo batch only |
 | `PREFLIGHT_SHOW_IMAGES` | on | load listing images in the drawer |
+| `CATALOG_RESOLVER` | `off` | `off` · `mock` (seeded demo) · `http` (customer endpoint) |
+| `CATALOG_RESOLVER_URL` | — | the customer's catalog endpoint, when resolver is `http` |
+| `CATALOG_RESOLVER_KEY` | — | bearer token for that endpoint, if it needs one |
+
+## Catalog dedup (GTIN → existing ZSKU)
+
+Before minting a new SKU, check the catalog by barcode: if a GTIN already
+exists, attach an offer to the existing listing instead of creating a
+duplicate. No *public* endpoint maps a GTIN to a marketplace's internal ZSKU
+— that mapping lives only inside the marketplace — so this ships as a **slot,
+not a baked-in integration**, chosen by `CATALOG_RESOLVER`:
+
+- `off` (default) — no lookups; the core stays offline and reproducible.
+- `mock` — a seeded, deterministic in-repo catalog, so the demo shows real
+  "already listed → here's the ZSKU" matches without any external service.
+- `http` — POSTs each GTIN to `CATALOG_RESOLVER_URL` (a customer's own
+  catalog API), expecting `{"zsku": "...", "title": "..."}` back. Nothing
+  proprietary is bundled; the customer supplies their own endpoint and key.
+
+A match surfaces as an `ALREADY_IN_CATALOG` flag with the ZSKU, an "Already
+listed" metric, an "In catalog" filter, and an `existing_zsku` column plus an
+`offer_existing` status in the exported sheet. The ZSKU format here
+(`ZSKU-xxxxxxxx`) is invented for the demo, not any real marketplace's scheme.
 
 ## What's next
 

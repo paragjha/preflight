@@ -124,6 +124,10 @@ def compute_metrics(batch_or_rows) -> dict:
         r["row_id"] for r in rows
         if r["verdict_semantic"] == "review" or r.get("reviews")
     }
+    already_in_catalog = sum(
+        1 for r in rows
+        if (r.get("catalog") or {}).get("status") == "found"
+    )
     return {
         "total_rows": total,
         "would_reject_on_upload": would_reject,
@@ -133,6 +137,7 @@ def compute_metrics(batch_or_rows) -> dict:
         "escalated_for_review": escalated,
         "clean": clean,
         "human_touched_rows": len(touched_ids),
+        "already_in_catalog": already_in_catalog,
         "semantic_status": semantic_status,
         "semantic_error_detail": error_detail,
         "semantic_batches_failed": batches_failed,

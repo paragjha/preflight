@@ -166,6 +166,12 @@
   .review-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
   .review-hint { font-size: var(--text-xs); color: var(--text-tertiary); margin-top: 8px; }
 
+  /* Catalog match card */
+  .catalog-card { padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid var(--info-500); background: var(--info-50); }
+  .catalog-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .catalog-zsku { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--info-700); flex: 1 1 auto; }
+  .catalog-reason { font-size: var(--text-sm); color: var(--text-primary); line-height: var(--leading-normal); }
+
   /* Shopper card at the top of the drawer — the listing as a buyer sees it */
   .shopper-card { display: flex; gap: 14px; padding: 12px; border-radius: var(--r-lg); background: var(--neutral-50); border: 1px solid var(--border-subtle); }
   .shopper-img { width: 84px; height: 84px; border-radius: var(--r-md); background: var(--neutral-100); flex: 0 0 auto; object-fit: cover; display: block; }
@@ -235,7 +241,7 @@
     view: 'upload',
     pendingFile: null,
     pendingRegion: 'AE',
-    config: {engine: 'rules', demo_only: false, show_images: true},
+    config: {engine: 'rules', demo_only: false, show_images: true, catalog_resolver: 'off'},
   };
 
   const $ = (sel, root=document) => root.querySelector(sel);
@@ -726,6 +732,17 @@
         isString: true,
       },
     ];
+    // Catalog dedup card — only when a resolver is active.
+    if (state.config.catalog_resolver && state.config.catalog_resolver !== 'off'
+        && typeof m.already_in_catalog === 'number') {
+      cards.push({
+        key: 'already_in_catalog',
+        label: 'Already listed',
+        value: m.already_in_catalog,
+        kind: 'brand',
+        hint: 'offer on the existing ZSKU, don’t duplicate',
+      });
+    }
 
     const grid = el('div', {class: 'metrics-row ds-stagger'});
     for (const c of cards) {
@@ -765,13 +782,16 @@
   }
 
   function filterCounts(rows) {
-    return {
+    const c = {
       all:      rows.length,
       bounced:  rows.filter(r => r.verdict_schema === 'reject').length,
       silent:   rows.filter(r => r.verdict_semantic === 'flag').length,
       needs:    rows.filter(r => r.verdict_semantic === 'review').length,
       clean:    rows.filter(r => r.verdict_schema !== 'reject' && r.verdict_semantic === 'pass').length,
     };
+    const inCatalog = rows.filter(r => (r.catalog || {}).status === 'found').length;
+    if (inCatalog) c.incatalog = inCatalog;
+    return c;
   }
 
   function renderFilterBar(counts) {
@@ -782,6 +802,7 @@
       needs:   'Needs you',
       clean:   'Clean',
     };
+    if ('incatalog' in counts) labels.incatalog = 'In catalog';
     const bar = el('div', {class: 'filter-bar'},
       el('div', {class: 'ds-seg', role: 'tablist'},
         ...Object.keys(labels).map(k =>
@@ -920,6 +941,7 @@
       case 'silent':  return row.verdict_semantic === 'flag';
       case 'needs':   return row.verdict_semantic === 'review';
       case 'clean':   return row.verdict_schema !== 'reject' && row.verdict_semantic === 'pass';
+      case 'incatalog': return (row.catalog || {}).status === 'found';
       default:        return true;
     }
   }
@@ -1058,10 +1080,23 @@
     // Only auto-open for a clean row, which would otherwise have nothing to show.
     if (!hasFlags) fieldsSection.setAttribute('open', '');
 
-    // Split real issues from automatic fixes — they read very differently.
-    const issues = (row.flags || []).filter(f => !f.auto_fixed);
+    // Split real issues from automatic fixes and catalog matches — all read differently.
+    const issues = (row.flags || []).filter(f => !f.auto_fixed && f.layer !== 'catalog');
     const fixes  = (row.flags || []).filter(f => f.auto_fixed);
+    const catalogFlag = (row.flags || []).find(f => f.layer === 'catalog');
     const sections = [shopper];
+    // Catalog match is a routing decision — surface it first, prominently.
+    if (catalogFlag) {
+      sections.push(el('div', {},
+        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Already in catalog'),
+        el('div', {class: 'catalog-card'},
+          el('div', {class: 'catalog-head'},
+            el('span', {class: 'catalog-zsku'}, catalogFlag.zsku || 'existing listing'),
+            el('span', {class: 'ds-badge ds-badge--info'}, 'attach an offer'),
+          ),
+          el('div', {class: 'catalog-reason'}, catalogFlag.reason || ''),
+        )));
+    }
     if (!hasFlags) {
       sections.push(el('div', {class: 'ds-hint'}, 'No flags. This row passed both layers.'));
     }

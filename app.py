@@ -19,6 +19,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import catalog
 import engine  # importing runs its own _load_dotenv_once; semantic.py loaded lazily
 import errors as error_sheet
 import memory
@@ -98,6 +99,23 @@ def _apply_semantic(batch: dict) -> None:
     batch["semantic_batches_run"] = result["batches_run"]
     batch["semantic_batches_failed"] = result["batches_failed"]
     batch["semantic_engine"] = result.get("engine", engine.current_engine())
+    _apply_catalog(batch)
+
+
+def _apply_catalog(batch: dict) -> None:
+    """Resolve each row's GTIN against the catalog resolver. Attaches an
+    ALREADY_IN_CATALOG flag + row['catalog'] finding where a GTIN already
+    exists, so a duplicate listing is caught before a new SKU is minted."""
+    rows = batch["rows"]
+    for row in rows:
+        row["flags"] = [f for f in row["flags"] if f.get("layer") != "catalog"]
+    findings = catalog.check_catalog(rows)
+    for row in rows:
+        finding = findings.get(row["row_id"], {"status": "new", "zsku": None})
+        row["catalog"] = finding
+        if finding.get("status") == "found":
+            row["flags"] = list(row["flags"]) + [catalog.make_flag(finding)]
+    batch["catalog_resolver"] = catalog.current_resolver()
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +137,7 @@ def get_config():
         "engine": engine.current_engine(),
         "demo_only": DEMO_ONLY,
         "show_images": SHOW_IMAGES,
+        "catalog_resolver": catalog.current_resolver(),
     }
 
 

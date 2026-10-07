@@ -33,9 +33,16 @@ _STATUS_COL = "preflight_status"
 def _row_status(row: dict) -> str:
     if row.get("verdict_schema") == "reject":
         return "fix_required"
+    if (row.get("catalog") or {}).get("status") == "found":
+        return "offer_existing"
     if row.get("verdict_semantic") in {"flag", "review"}:
         return "review"
     return "ready"
+
+
+def _any_catalog_match(batch: dict) -> bool:
+    return any((r.get("catalog") or {}).get("status") == "found"
+               for r in batch.get("rows", []))
 
 
 def _reject_fields(row: dict) -> set[str]:
@@ -55,7 +62,9 @@ def build_export_xlsx(batch: dict) -> bytes:
     ws.title = "products"
 
     field_names = [name for name, _required, _examples in FIELDS]
-    headers = field_names + [_STATUS_COL]
+    # Only add the existing_zsku column when the catalog resolver found matches.
+    include_zsku = _any_catalog_match(batch)
+    headers = field_names + [_STATUS_COL] + (["existing_zsku"] if include_zsku else [])
     ws.append(headers)
     for cell in ws[1]:
         cell.font = _HEADER_FONT
@@ -64,7 +73,8 @@ def build_export_xlsx(batch: dict) -> bytes:
     for row in batch.get("rows", []):
         fields = row.get("fields", {})
         status = _row_status(row)
-        ws.append([fields.get(name, "") for name in field_names] + [status])
+        extra = ([(row.get("catalog") or {}).get("zsku") or ""] if include_zsku else [])
+        ws.append([fields.get(name, "") for name in field_names] + [status] + extra)
         if status == "fix_required":
             offenders = _reject_fields(row)
             excel_row = ws.max_row
