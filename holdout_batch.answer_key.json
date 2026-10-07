@@ -1,0 +1,46 @@
+{
+  "r001": [],
+  "r002": [],
+  "r003": [],
+  "r004": [],
+  "r005": [],
+  "r006": [],
+  "r007": [],
+  "r008": [],
+  "r009": [
+    "TITLE_SIZE_MISMATCH"
+  ],
+  "r010": [
+    "TITLE_SIZE_MISMATCH"
+  ],
+  "r011": [
+    "UNIT_IMPLAUSIBLE"
+  ],
+  "r012": [
+    "DESC_CONTRADICTION"
+  ],
+  "r013": [
+    "DESC_CONTRADICTION"
+  ],
+  "r014": [
+    "DESC_CONTRADICTION"
+  ],
+  "r015": [
+    "TITLE_BRAND_MISMATCH"
+  ],
+  "r016": [
+    "TITLE_BRAND_MISMATCH"
+  ],
+  "r017": [
+    "TITLE_SIZE_MISMATCH"
+  ],
+  "r018": [
+    "UNIT_IMPLAUSIBLE"
+  ],
+  "r019": [
+    "TITLE_BRAND_MISMATCH"
+  ],
+  "r020": [
+    "DESC_CONTRADICTION"
+  ]
+}
