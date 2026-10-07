@@ -142,12 +142,21 @@
   .drawer-fields .field-fixed .arrow { color: var(--text-tertiary); }
   .drawer-fields .field-fixed .new { color: var(--success-700); font-weight: 600; }
   .drawer-fields dd.mono-value { font-family: var(--font-mono); font-size: 12.5px; }
+  /* Collapsible "All fields" disclosure */
+  .field-disclosure { border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+  .field-disclosure > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); user-select: none; }
+  .field-disclosure > summary:hover { color: var(--text-secondary); }
+  .field-disclosure > summary::-webkit-details-marker { display: none; }
+  .field-disclosure .chev { display: inline-block; transition: transform var(--dur-2) var(--ease-out); font-size: 10px; color: var(--text-tertiary); }
+  .field-disclosure[open] .chev { transform: rotate(90deg); }
+  .field-disclosure .drawer-fields { margin-top: 12px; }
   .drawer-flags { display: flex; flex-direction: column; gap: 10px; }
   .flag-card { padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid var(--border-default); background: var(--surface); }
   .flag-card--reject   { border-color: var(--danger-500);  background: var(--danger-50); }
   .flag-card--fixed    { border-color: var(--success-500); background: var(--success-50); }
   .flag-card--semantic { border-color: var(--warning-500); background: var(--warning-50); }
-  .flag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .flag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .flag-head .flag-code { flex: 1 1 auto; }
   .flag-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .flag-dot--danger { background: var(--danger-500); }
   .flag-dot--warning { background: var(--warning-500); }
@@ -1012,11 +1021,6 @@
       ),
     );
 
-    // Flags section
-    const flagList = (row.flags || []).length
-      ? (row.flags || []).map(f => renderFlagCard(rowId, f))
-      : [el('div', {class: 'ds-hint'}, 'No flags. This row passed both layers.')];
-
     // Fields section — includes old→new for auto-fixed
     const fieldNames = ['category','brand','title','gtin','size','size_unit','image_url','video_url','description','partner_sku'];
     const fixByField = {};
@@ -1041,17 +1045,38 @@
       }
     }
 
-    const body = el('div', {class: 'drawer'},
-      shopper,
-      el('div', {},
-        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Flags'),
-        el('div', {class: 'drawer-flags'}, ...flagList),
-      ),
-      el('div', {},
-        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Fields'),
-        el('div', {class: 'drawer-fields'}, dl),
-      ),
+    // Fields are reference data — collapse by default (progressive disclosure).
+    // Auto-open only when there's nothing else to look at (clean row) or when
+    // there are autofix diffs worth reviewing.
+    const hasFlags = (row.flags || []).length > 0;
+    const fieldsSection = el('details', {class: 'field-disclosure'},
+      el('summary', {},
+        el('span', {class: 'chev'}, '▶'),
+        ` All fields (${fieldNames.length})`),
+      el('div', {class: 'drawer-fields'}, dl),
     );
+    // Only auto-open for a clean row, which would otherwise have nothing to show.
+    if (!hasFlags) fieldsSection.setAttribute('open', '');
+
+    // Split real issues from automatic fixes — they read very differently.
+    const issues = (row.flags || []).filter(f => !f.auto_fixed);
+    const fixes  = (row.flags || []).filter(f => f.auto_fixed);
+    const sections = [shopper];
+    if (!hasFlags) {
+      sections.push(el('div', {class: 'ds-hint'}, 'No flags. This row passed both layers.'));
+    }
+    if (issues.length) {
+      sections.push(el('div', {},
+        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, "What's wrong"),
+        el('div', {class: 'drawer-flags'}, ...issues.map(f => renderFlagCard(rowId, f)))));
+    }
+    if (fixes.length) {
+      sections.push(el('div', {},
+        el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Fixed automatically'),
+        el('div', {class: 'drawer-flags'}, ...fixes.map(f => renderFlagCard(rowId, f)))));
+    }
+    sections.push(fieldsSection);
+    const body = el('div', {class: 'drawer'}, ...sections);
 
     const footer = hasReviewFlags
       ? el('div', {class: 'kbd-hint'},
@@ -1088,16 +1113,18 @@
                   : f.layer === 'semantic'  ? 'warning'
                   :                           'warning';
     const canReview = f.layer === 'semantic' && f.code !== 'OTHER';
+    // One meaningful chip on the right — the dot/border already carry severity.
+    const metaChip = f.auto_fixed
+      ? el('span', {class: 'ds-badge ds-badge--success'}, 'auto-fixed')
+      : (typeof f.confidence === 'number' && f.layer === 'semantic')
+        ? el('span', {class: 'ds-badge ds-badge--info'}, `${Math.round(f.confidence * 100)}% sure`)
+        : el('span', {class: 'ds-badge ds-badge--' + (f.severity === 'reject' ? 'danger' : 'warning')},
+            f.severity === 'reject' ? 'would reject' : 'warn');
     const card = el('div', {class: `flag-card ${cls}`},
       el('div', {class: 'flag-head'},
         el('span', {class: `flag-dot flag-dot--${dotTone}`}),
         el('span', {class: 'flag-code'}, f.code),
-        el('span', {class: 'ds-badge ds-badge--neutral'}, f.layer),
-        el('span', {class: 'ds-badge ds-badge--' + (f.severity === 'reject' ? 'danger' : 'warning')}, f.severity),
-        f.auto_fixed ? el('span', {class: 'ds-badge ds-badge--success'}, 'auto-fixed') : null,
-        typeof f.confidence === 'number' && f.layer === 'semantic'
-          ? el('span', {class: 'ds-badge ds-badge--info'}, `${Math.round(f.confidence * 100)}%`)
-          : null,
+        metaChip,
       ),
       el('div', {class: 'flag-reason'}, f.reason || ''),
     );
