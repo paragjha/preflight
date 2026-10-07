@@ -19,9 +19,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import engine  # importing runs its own _load_dotenv_once; semantic.py loaded lazily
 import errors as error_sheet
 import memory
-import semantic  # importing runs _load_dotenv_once
 import template
 from export import build_export_xlsx
 from ingest import ingest as ingest_xlsx
@@ -34,9 +34,22 @@ DATA_DIR = os.path.join(HERE, "data")
 BATCHES_DIR = os.path.join(DATA_DIR, "batches")
 STATIC_DIR = os.path.join(HERE, "static")
 
+# Public-demo mode: block the data-upload routes so a deployed instance only
+# runs the bundled synthetic batch. Real partner data never touches it.
+DEMO_ONLY = os.environ.get("PREFLIGHT_DEMO_ONLY", "").strip() in {"1", "true", "yes"}
+# Whether the drawer should try to load listing images (your browser fetches
+# them from the partner URL). Off = zero outbound traffic.
+SHOW_IMAGES = os.environ.get("PREFLIGHT_SHOW_IMAGES", "1").strip() not in {"0", "false", "no"}
+
 os.makedirs(BATCHES_DIR, exist_ok=True)
 
 app = FastAPI(title="PreFlight", version="1.0")
+
+
+def _require_not_demo():
+    if DEMO_ONLY:
+        raise HTTPException(403, "this is the public demo — uploads are disabled. "
+                                 "Use 'Load demo batch'.")
 
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -77,13 +90,14 @@ def _apply_semantic(batch: dict) -> None:
     tenant = batch.get("tenant", memory.DEFAULT_TENANT)
     for row in rows:
         row["flags"] = [f for f in row["flags"] if f.get("layer") != "semantic"]
-    result = semantic.check_semantic(rows, memory.load(tenant))
+    result = engine.run_semantic(rows, memory.load(tenant))
     for row in rows:
         row["flags"] = list(row["flags"]) + result["row_flags"].get(row["row_id"], [])
     batch["semantic_status"] = result["status"]
     batch["semantic_error_detail"] = result["error_detail"]
     batch["semantic_batches_run"] = result["batches_run"]
     batch["semantic_batches_failed"] = result["batches_failed"]
+    batch["semantic_engine"] = result.get("engine", engine.current_engine())
 
 
 # ---------------------------------------------------------------------------
@@ -98,12 +112,23 @@ def root():
     return FileResponse(index)
 
 
+@app.get("/api/config")
+def get_config():
+    """Front-end feature flags, so the UI reflects the running instance."""
+    return {
+        "engine": engine.current_engine(),
+        "demo_only": DEMO_ONLY,
+        "show_images": SHOW_IMAGES,
+    }
+
+
 @app.post("/api/batches")
 async def upload_batch(
     file: UploadFile = File(...),
     region: str = Form(...),
     tenant: str = Form(memory.DEFAULT_TENANT),
 ):
+    _require_not_demo()
     if region not in REGIONS:
         raise HTTPException(400, f"region must be one of {REGIONS}")
 
@@ -273,6 +298,7 @@ async def upload_rulepack(tenant: str, file: UploadFile = File(...)):
     columns; store a rulepack for this tenant. Every subsequent batch upload
     scoped to this tenant validates against it.
     """
+    _require_not_demo()
     tmp = os.path.join(DATA_DIR, f"_template_{uuid.uuid4().hex}.xlsx")
     os.makedirs(DATA_DIR, exist_ok=True)
     try:
@@ -316,6 +342,7 @@ async def ingest_error_sheet(batch_id: str, file: UploadFile = File(...)):
     turned into a `confirmed_error` correction (fields snapshot + validator
     message) and appended to this batch's tenant memory. Next semantic run
     folds them in as few-shot."""
+    _require_not_demo()
     batch = _load_batch(batch_id)
     tenant = batch.get("tenant", memory.DEFAULT_TENANT)
 

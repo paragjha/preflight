@@ -1,203 +1,178 @@
 """End-to-end pipeline runner + honest metrics vs. the answer key.
 
 Usage:
-    ANTHROPIC_API_KEY=... python proof.py            # normal run
-    ANTHROPIC_API_KEY=... python proof.py --learn    # + demonstrate the memory loop
+    python proof.py                       # demo batch, default engine (rules, no key)
+    python proof.py --batch holdout       # the committed holdout batch
+    python proof.py --batch both          # both, scored separately
+    python proof.py --learn               # + demonstrate the correction loop
+    SEMANTIC_ENGINE=llm python proof.py   # score the LLM path instead (needs a key)
 
-Rebuilds the demo batch, runs schema then semantic, then compares the
-pipeline's output against demo_batch.answer_key.json — computed by
-this script, never by eyeball.
+Runs ingest -> schema (incl. cross-row) -> the selected semantic engine, then
+compares the pipeline's output against the batch's answer key. Buckets are
+derived from the answer key itself, never hardcoded, so the same scorer works
+for the demo and the holdout. The answer key is for auditing only; the pipeline
+never reads it.
 """
 
-import io
 import json
 import os
 import subprocess
 import sys
 
-# Force UTF-8 on Windows consoles so em-dashes etc. don't get mojibake'd.
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-from ingest import ingest
-from validate_schema import check_schema
-from semantic import check_semantic
+import engine
 import memory
+from ingest import ingest
+from validate_schema import check_schema_batch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-XLSX = os.path.join(HERE, "demo_batch.xlsx")
-ANSWER_KEY = os.path.join(HERE, "demo_batch.answer_key.json")
+
+SEMANTIC_CODES = {"TITLE_BRAND_MISMATCH", "TITLE_SIZE_MISMATCH",
+                  "UNIT_IMPLAUSIBLE", "DESC_CONTRADICTION"}
+
+BATCHES = {
+    "demo":    ("demo_batch.xlsx",    "demo_batch.answer_key.json"),
+    "holdout": ("holdout_batch.xlsx", "holdout_batch.answer_key.json"),
+}
 
 
-def _ensure_demo_batch():
-    if not os.path.exists(XLSX):
+def _ensure_files(xlsx):
+    """Regenerate the batches if missing (demo_* are gitignored)."""
+    if not os.path.exists(os.path.join(HERE, xlsx)):
         subprocess.check_call([sys.executable, os.path.join(HERE, "generator.py")])
+        subprocess.check_call([sys.executable, os.path.join(HERE, "generator.py"), "--holdout"])
 
 
-def _run_pipeline(corrections):
-    rows = ingest(XLSX)
-    counters: dict = {}
+def _run_pipeline(xlsx, corrections):
+    rows = ingest(os.path.join(HERE, xlsx))
+    check_schema_batch(rows, region="AE")
+    result = engine.run_semantic(rows, corrections)
     for row in rows:
-        check_schema(row, region="AE", counters=counters)
-    sem_flags = check_semantic(rows, corrections)
-    for row in rows:
-        row["flags"] = list(row["flags"]) + sem_flags.get(row["row_id"], [])
-    return rows
+        row["flags"] = list(row["flags"]) + result["row_flags"].get(row["row_id"], [])
+    return rows, result
 
 
-def _score(rows):
-    with open(ANSWER_KEY) as f:
-        ak = json.load(f)
+def _score(rows, ak):
+    by = {r["row_id"]: r for r in rows}
 
-    clean_ids     = [f"r{i:03d}" for i in range(1, 31)]
-    broken_ids    = [f"r{i:03d}" for i in range(31, 49)]
-    semantic_ids  = [f"r{i:03d}" for i in range(49, 61)]
-    rows_by_id    = {r["row_id"]: r for r in rows}
+    def sem_codes(rid):
+        return {f["code"] for f in by[rid]["flags"]
+                if f.get("layer") == "semantic" and f.get("code") in SEMANTIC_CODES}
 
-    _SEMANTIC_CODES = {"TITLE_BRAND_MISMATCH", "TITLE_SIZE_MISMATCH",
-                       "UNIT_IMPLAUSIBLE", "DESC_CONTRADICTION"}
+    def schema_reject_codes(rid):
+        return {f["code"] for f in by[rid]["flags"]
+                if f.get("layer") == "schema"
+                and f.get("severity") == "reject" and not f.get("auto_fixed")}
 
-    def sem_flags(rid):
-        return [f for f in rows_by_id[rid]["flags"] if f.get("layer") == "semantic"
-                and f.get("code") in _SEMANTIC_CODES]
+    clean = [rid for rid, c in ak.items() if not c]
+    sem_traps = [rid for rid, c in ak.items() if set(c) & SEMANTIC_CODES]
+    schema_traps = [rid for rid, c in ak.items() if c and not set(c) & SEMANTIC_CODES]
 
-    def schema_reject_flags(rid):
-        return [f for f in rows_by_id[rid]["flags"] if f.get("layer") == "schema"
-                and f.get("severity") == "reject" and not f.get("auto_fixed")]
+    sem_caught, sem_miss = 0, []
+    for rid in sem_traps:
+        exp = set(ak[rid]) & SEMANTIC_CODES
+        if exp & sem_codes(rid):
+            sem_caught += 1
+        else:
+            sem_miss.append((rid, ak[rid]))
 
-    def trap_caught(rid):
-        # A trap row counts as caught by EITHER a semantic flag OR by a
-        # deterministic cross-row check that matches the answer-key code.
-        # r060 is now caught by DUPLICATE_GTIN (schema, cross-row); the
-        # rest are caught semantically.
-        expected = set(ak.get(rid, []))
-        actual_semantic = {f["code"] for f in sem_flags(rid)}
-        actual_schema   = {f["code"] for f in schema_reject_flags(rid)}
-        return bool(expected & (actual_semantic | actual_schema))
+    schema_caught = sum(1 for rid in schema_traps
+                        if set(ak[rid]) & schema_reject_codes(rid))
 
-    schema_caught = sum(1 for rid in broken_ids if schema_reject_flags(rid))
-    semantic_caught = sum(1 for rid in semantic_ids if trap_caught(rid))
-    false_positives = sum(1 for rid in clean_ids if sem_flags(rid))
+    fps = [(rid, sorted(sem_codes(rid))) for rid in clean if sem_codes(rid)]
 
     return {
+        "clean": clean, "sem_traps": sem_traps, "schema_traps": schema_traps,
+        "sem_caught": sem_caught, "sem_miss": sem_miss,
         "schema_caught": schema_caught,
-        "schema_total": len(broken_ids),
-        "semantic_caught": semantic_caught,
-        "semantic_total": len(semantic_ids),
-        "false_positives_on_clean": false_positives,
-        "clean_total": len(clean_ids),
-        "answer_key": ak,
-        "rows_by_id": rows_by_id,
+        "fps": fps, "by": by, "ak": ak,
     }
 
 
-def _print_report(score, label=""):
-    print(f"\n=== Pipeline result {label} ".ljust(70, "="))
-    print(f"Schema layer:  caught {score['schema_caught']}/{score['schema_total']} "
+def _report(name, s, result):
+    print(f"\n=== {name} ({result.get('engine')} engine) "
+          .ljust(66, "="))
+    print(f"Schema layer:   caught {s['schema_caught']}/{len(s['schema_traps'])} "
           f"schema-broken rows")
-    print(f"Semantic layer: caught {score['semantic_caught']}/{score['semantic_total']} "
-          f"semantic-trap rows")
-    print(f"False positives on {score['clean_total']} clean rows: "
-          f"{score['false_positives_on_clean']}")
+    print(f"Semantic layer: caught {s['sem_caught']}/{len(s['sem_traps'])} semantic traps")
+    print(f"False positives on {len(s['clean'])} clean rows: {len(s['fps'])}")
+    for rid, codes in s["sem_miss"]:
+        reasons = "; ".join(f["reason"] for f in s["by"][rid]["flags"]
+                            if f.get("layer") == "semantic") or "(no flag)"
+        print(f"   MISS {rid} expected {codes} — {reasons}")
+    for rid, codes in s["fps"]:
+        reasons = "; ".join(f["reason"] for f in s["by"][rid]["flags"]
+                            if f.get("layer") == "semantic")
+        print(f"   FP   {rid} {codes} — {reasons}")
 
-    print("\nPer-trap detail:")
-    ak = score["answer_key"]
-    for rid in [f"r{i:03d}" for i in range(49, 61)]:
-        expected = ak[rid]
-        row = score["rows_by_id"][rid]
-        sem_codes = [f["code"] for f in row["flags"] if f.get("layer") == "semantic"]
-        cross_codes = [f["code"] for f in row["flags"]
-                       if f.get("layer") == "schema" and f.get("severity") == "reject"
-                       and not f.get("auto_fixed")
-                       and f["code"] in {"DUPLICATE_GTIN", "DUPLICATE_SKU"}]
-        actual = sem_codes + cross_codes
-        hit = "hit " if (set(expected) & set(actual)) else "MISS"
-        reasons = "; ".join(
-            f["reason"] for f in row["flags"]
-            if (f.get("layer") == "semantic")
-               or (f.get("layer") == "schema" and f["code"] in cross_codes)
-        )
-        print(f"  {rid} {hit}  expected={expected}  actual={actual}"
-              + (f"  — {reasons}" if reasons else ""))
 
-    fps = [(rid, [f for f in score["rows_by_id"][rid]["flags"] if f.get("layer") == "semantic"])
-           for rid in [f"r{i:03d}" for i in range(1, 31)]]
-    fps = [(rid, flags) for rid, flags in fps if flags]
-    if fps:
-        print("\nFalse positives on clean rows:")
-        for rid, flags in fps:
-            for f in flags:
-                print(f"  {rid} {f['code']} conf={f['confidence']:.2f} — {f['reason']}")
+def _run_one(key):
+    xlsx, akname = BATCHES[key]
+    _ensure_files(xlsx)
+    ak = json.load(open(os.path.join(HERE, akname)))
+    rows, result = _run_pipeline(xlsx, memory.load(memory.DEFAULT_TENANT))
+    s = _score(rows, ak)
+    _report(key.upper(), s, result)
+    return s, result
+
+
+def _learn_demo():
+    """Mark one semantic flag as a false positive, re-run, confirm it's gone.
+
+    With the rules engine this proves the exception loop; the suppression is
+    targeted (same brand / same term pair), not generalised like the LLM path.
+    """
+    xlsx, akname = BATCHES["demo"]
+    _ensure_files(xlsx)
+    ak = json.load(open(os.path.join(HERE, akname)))
+    memory.clear(memory.DEFAULT_TENANT)
+
+    rows, result = _run_pipeline(xlsx, memory.load(memory.DEFAULT_TENANT))
+    s = _score(rows, ak)
+    _report("DEMO (initial)", s, result)
+
+    target = None
+    for rid in s["sem_traps"]:
+        flags = [f for f in s["by"][rid]["flags"]
+                 if f.get("layer") == "semantic" and f.get("code") in SEMANTIC_CODES]
+        if flags:
+            target = (rid, flags[0])
+            break
+    if not target:
+        print("\n(no semantic flag to feed the learning loop)")
+        return
+    rid, flag = target
+    print(f"\nHuman review: marking {rid}'s {flag['code']} as a false positive...")
+    memory.append({
+        "fields": s["by"][rid]["fields"],
+        "human_verdict": "false_positive",
+        "note": "reviewer confirmed this row is fine",
+        "flag_code": flag["code"],
+    })
+
+    rows2, result2 = _run_pipeline(xlsx, memory.load(memory.DEFAULT_TENANT))
+    s2 = _score(rows2, ak)
+    still = {f["code"] for f in s2["by"][rid]["flags"] if f.get("layer") == "semantic"}
+    print(f"Re-ran. {rid}'s {flag['code']} suppressed after learning? "
+          f"{'YES' if flag['code'] not in still else 'NO'}")
+    memory.clear(memory.DEFAULT_TENANT)
 
 
 def main():
-    _ensure_demo_batch()
-    demo_learn = "--learn" in sys.argv
-
-    if demo_learn:
-        # Fresh state for the learning demo
-        memory.clear(memory.DEFAULT_TENANT)
-
-    print("Loaded corrections:", len(memory.load(memory.DEFAULT_TENANT)))
-    rows = _run_pipeline(memory.load(memory.DEFAULT_TENANT))
-    score = _score(rows)
-    _print_report(score, label="(initial)")
-
-    dod_ok = (score["semantic_caught"] >= 9 and score["false_positives_on_clean"] <= 2)
-    print(f"\nDoD: semantic >= 9/12 AND FP <= 2 -> {'PASS' if dod_ok else 'FAIL'}")
-
-    if not demo_learn:
+    if "--learn" in sys.argv:
+        _learn_demo()
         return
-
-    # Learning-loop demo: mark a semantic flag as "false positive" per a human
-    # reviewer, re-run, confirm the model suppresses the same-shape flag.
-    # Prefer a real FP if the model produced one; otherwise use a caught trap
-    # to demonstrate the mechanism (the memory loop is what we're proving here,
-    # not that we can invent FPs on demand).
-    clean_ids = [f"r{i:03d}" for i in range(1, 31)]
-    trap_ids  = [f"r{i:03d}" for i in range(49, 61)]
-
-    def _first_sem_flag(rid_list):
-        for rid in rid_list:
-            flags = [f for f in score["rows_by_id"][rid]["flags"]
-                     if f.get("layer") == "semantic"
-                     and f.get("code") != "OTHER"]
-            if flags:
-                return score["rows_by_id"][rid], flags[0]
-        return None, None
-
-    fp_row, fp_flag = _first_sem_flag(clean_ids)
-    used_synthetic = False
-    if fp_row is None:
-        fp_row, fp_flag = _first_sem_flag(trap_ids)
-        used_synthetic = True
-
-    if fp_row is None:
-        print("\n(no semantic flags to feed the learning loop)")
-        return
-
-    tag = "TRAP re-labelled as FP (demo of mechanism)" if used_synthetic else "real FP"
-    print(f"\nHuman review: marking {fp_row['row_id']}'s {fp_flag['code']} flag "
-          f"as a false positive ({tag})...")
-    memory.append({
-        "fields": fp_row["fields"],
-        "human_verdict": "false_positive",
-        "note": "reviewer confirmed this row is fine as-is",
-        "flag_code": fp_flag["code"],
-    })
-
-    print("Re-running semantic layer with memory in place...")
-    rows2 = _run_pipeline(memory.load(memory.DEFAULT_TENANT))
-    score2 = _score(rows2)
-    _print_report(score2, label="(after learning)")
-
-    still = [f for f in score2["rows_by_id"][fp_row["row_id"]]["flags"]
-             if f.get("layer") == "semantic" and f.get("code") == fp_flag["code"]]
-    print(f"\nWas {fp_row['row_id']}'s {fp_flag['code']} flag suppressed after learning? "
-          f"{'YES' if not still else 'NO'}")
+    which = "demo"
+    if "--batch" in sys.argv:
+        which = sys.argv[sys.argv.index("--batch") + 1]
+    keys = ["demo", "holdout"] if which == "both" else [which]
+    for k in keys:
+        _run_one(k)
 
 
 if __name__ == "__main__":
