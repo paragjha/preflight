@@ -152,6 +152,25 @@
   .flag-reason { font-size: var(--text-sm); color: var(--text-primary); line-height: var(--leading-normal); }
   .review-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
   .review-hint { font-size: var(--text-xs); color: var(--text-tertiary); margin-top: 8px; }
+
+  /* Shopper card at the top of the drawer — the listing as a buyer sees it */
+  .shopper-card { display: flex; gap: 14px; padding: 12px; border-radius: var(--r-lg); background: var(--neutral-50); border: 1px solid var(--border-subtle); }
+  .shopper-img { width: 84px; height: 84px; border-radius: var(--r-md); background: var(--neutral-100); flex: 0 0 auto; object-fit: cover; display: block; }
+  .shopper-ph { width: 84px; height: 84px; border-radius: var(--r-md); background: var(--neutral-100); border: 1px dashed var(--border-strong); flex: 0 0 auto; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 10px; color: var(--text-tertiary); padding: 6px; line-height: 1.3; }
+  .shopper-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+  .shopper-crumb { font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+  .shopper-name { font-size: var(--text-md); font-weight: 600; color: var(--text-primary); line-height: 1.3; }
+  .shopper-chips { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+
+  .kbd-hint { font-size: var(--text-xs); color: var(--text-tertiary); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .kbd-hint .ds-kbd { margin-right: 3px; }
+
+  /* Keyboard-focused row in the table */
+  .rows-card tbody tr.is-cursor { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+  .rows-card tbody tr.is-reviewed td:first-child::after { content: "✓"; color: var(--success-600); margin-left: 6px; font-family: var(--font-sans); }
+
+  .review-progress { display: flex; align-items: center; gap: 10px; font-size: var(--text-xs); color: var(--text-secondary); min-width: 180px; }
+  .review-progress .ds-progress { width: 90px; }
 </style>
 </head>
 <body>
@@ -198,10 +217,12 @@
     deltaBadges: {},         // {metric_key: '↓2'} — cleared on next interaction
     filter: 'all',
     dialogRowId: null,
+    focusRowId: null,        // keyboard cursor in the table
     lastFocused: null,
     view: 'upload',
     pendingFile: null,
     pendingRegion: 'AE',
+    config: {engine: 'rules', demo_only: false, show_images: true},
   };
 
   const $ = (sel, root=document) => root.querySelector(sel);
@@ -333,6 +354,16 @@
   }
 
   function buildUploadForm() {
+    // Public demo: no file uploads. Only "Load demo batch" remains.
+    if (state.config.demo_only) {
+      return el('div', {style: 'width: 100%; display: flex; flex-direction: column; gap: 16px; align-items: center;'},
+        el('div', {class: 'ds-hint', style: 'text-align: center;'},
+          'This is the public demo — uploads are disabled. Load the bundled batch to explore.'),
+        el('button', {type: 'button', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'demo-btn', onclick: onLoadDemo},
+          icon(ICON.sparkle), 'Load demo batch'),
+        el('span', {class: 'ds-hint'}, '60 rows, 18 rejects, 12 subtle errors.'),
+      );
+    }
     const form = el('form', {id: 'upload-form', onsubmit: onUploadSubmit, style: 'width: 100%;'},
       el('div', {class: 'upload-form'},
         el('div', {class: 'ds-field'},
@@ -445,7 +476,8 @@
     const stageDefs = [
       {key: 'read',  label: 'Reading the sheet'},
       {key: 'schema', label: 'Schema checks (deterministic)'},
-      {key: 'semantic', label: 'Semantic review (AI)'},
+      {key: 'semantic', label: state.config.engine === 'rules'
+        ? 'Semantic checks (rules)' : 'Semantic review (AI)'},
     ];
     const nodes = {};
     for (const s of stageDefs) {
@@ -522,8 +554,10 @@
     const m = state.currentMetrics;
     main.innerHTML = '';
 
-    const failed = m.semantic_status && m.semantic_status !== 'ok';
-    const hasCorrections = state.batches.reduce((n, x) => n + (x.batch_id === b.batch_id ? (x.rows_reviewed || 0) : 0), 0);
+    // The offline banner is only meaningful for an LLM engine; the rules
+    // engine never fails and always returns status "ok".
+    const failed = (m.semantic_status && m.semantic_status !== 'ok')
+      && (b.semantic_engine !== 'rules');
     const reviewedCount = b.rows.filter(r => (r.reviews || []).length > 0).length;
 
     // Topbar
@@ -543,6 +577,7 @@
                       onclick: onDownloadErrors,
                       title: "Get a plausible cataloging-tool error sheet built from this batch's rejected rows"},
           icon(ICON.download), 'Errors ↓'),
+        state.config.demo_only ? null :
         el('button', {class: 'ds-btn ds-btn--ghost ds-btn--sm', type: 'button', id: 'btn-err-upload',
                       onclick: () => document.querySelector('#errsheet-file').click(),
                       title: 'Upload the tool\'s returned error sheet — folds each rejection into memory'},
@@ -718,7 +753,18 @@
           )
         ),
       ),
-      el('div', {class: 'ds-caps'}, `${counts[state.filter]} row${counts[state.filter] === 1 ? '' : 's'} shown`),
+      (() => {
+        const {done, total} = reviewCounts();
+        if (!total) return el('div', {class: 'ds-caps'},
+          `${counts[state.filter]} row${counts[state.filter] === 1 ? '' : 's'} shown`);
+        const pct = Math.round((done / total) * 100);
+        return el('div', {class: 'review-progress'},
+          el('span', {}, `Reviewed ${done} of ${total}`),
+          el('span', {class: 'ds-progress', role: 'progressbar',
+                      'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct)},
+            el('span', {class: 'ds-progress-bar', style: `width: ${Math.max(2, pct)}%;`})),
+        );
+      })(),
     );
     return bar;
   }
@@ -726,12 +772,21 @@
   const SEVERITY_ORDER = {reject: 0, flag: 1, review: 2, fixed: 3, pass: 4};
 
   function sortRows(rows) {
+    // In the "Needs you" filter, sort purely by confidence ascending — most
+    // uncertain first, which is where the human adds the most value.
+    if (state.filter === 'needs') {
+      return [...rows].sort((a, b) =>
+        rowMinConfidence(a) - rowMinConfidence(b) || (a.row_id || '').localeCompare(b.row_id || ''));
+    }
     return [...rows].sort((a, b) => {
-      const worstA = worstVerdict(a);
-      const worstB = worstVerdict(b);
-      const ra = SEVERITY_ORDER[worstA] ?? 9;
-      const rb = SEVERITY_ORDER[worstB] ?? 9;
+      const ra = SEVERITY_ORDER[worstVerdict(a)] ?? 9;
+      const rb = SEVERITY_ORDER[worstVerdict(b)] ?? 9;
       if (ra !== rb) return ra - rb;
+      // within the review band, least-confident first
+      if (worstVerdict(a) === 'review' && worstVerdict(b) === 'review') {
+        const dc = rowMinConfidence(a) - rowMinConfidence(b);
+        if (dc) return dc;
+      }
       return (a.row_id || '').localeCompare(b.row_id || '');
     });
   }
@@ -741,6 +796,27 @@
     if (r.verdict_semantic === 'review') return 'review';
     if (r.verdict_schema === 'fixed') return 'fixed';
     return 'pass';
+  }
+
+  const SEMANTIC_CODES = ['TITLE_BRAND_MISMATCH','TITLE_SIZE_MISMATCH','UNIT_IMPLAUSIBLE','DESC_CONTRADICTION'];
+  function semanticFlags(row) {
+    return (row.flags || []).filter(f => f.layer === 'semantic' && SEMANTIC_CODES.includes(f.code));
+  }
+  function isReviewable(row) { return semanticFlags(row).length > 0; }
+  function isReviewed(row) { return (row.reviews || []).length > 0; }
+  function rowMinConfidence(row) {
+    const cs = semanticFlags(row).map(f => typeof f.confidence === 'number' ? f.confidence : 1);
+    return cs.length ? Math.min(...cs) : 1;
+  }
+  // Rows currently shown in the table, in display order.
+  function displayedRows() {
+    return sortRows((state.currentBatch.rows || []).filter(r => passesFilter(r, state.filter)));
+  }
+  function reviewCounts() {
+    const rows = state.currentBatch.rows || [];
+    const total = rows.filter(isReviewable).length;
+    const done = rows.filter(r => isReviewable(r) && isReviewed(r)).length;
+    return {done, total};
   }
 
   function renderRowsTable(rows) {
@@ -773,8 +849,12 @@
     )));
     const tbody = el('tbody', {});
     for (const row of filtered) {
+      const cls = (row.row_id === state.focusRowId ? ' is-cursor' : '')
+                + (isReviewed(row) ? ' is-reviewed' : '');
       tbody.appendChild(el('tr', {
         tabindex: '0', role: 'button', 'aria-label': `Open ${row.row_id}`,
+        'data-row-id': row.row_id,
+        class: cls.trim() || null,
         onclick: () => openDrawer(row.row_id),
         onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(row.row_id); } },
       },
@@ -838,7 +918,9 @@
     state.dialogRowId = rowId;
     state.lastFocused = document.activeElement;
 
+    state.focusRowId = rowId;
     const hasReviewFlags = (row.flags || []).some(f => f.layer === 'semantic' && f.code !== 'OTHER');
+    const {done, total} = reviewCounts();
 
     // Header
     const closeBtn = el('button', {class: 'ds-iconbtn ds-iconbtn--sm', type: 'button', id: 'drawer-close',
@@ -856,9 +938,44 @@
         el('div', {class: 'drawer-verdicts'},
           schemaBadge(row.verdict_schema),
           semanticBadge(row.verdict_semantic),
+          total ? el('span', {class: 'ds-badge ds-badge--neutral'}, `reviewed ${done} of ${total}`) : null,
         ),
       ),
       closeBtn,
+    );
+
+    // Shopper card — the listing as a buyer sees it
+    const brand = row.fields.brand || '';
+    const title = row.fields.title || 'untitled';
+    const displayName = (brand && !title.toLowerCase().includes(brand.toLowerCase()))
+      ? `${brand} ${title}` : title;
+    const imgUrl = row.fields.image_url || '';
+    let imgHost = '';
+    try { imgHost = imgUrl ? new URL(imgUrl).host : ''; } catch (e) {}
+    const sizeChip = (row.fields.size || row.fields.size_unit)
+      ? `${row.fields.size || ''} ${row.fields.size_unit || ''}`.trim() : '';
+    let imgEl;
+    if (state.config.show_images && imgUrl) {
+      imgEl = el('img', {class: 'shopper-img', src: imgUrl, alt: '', loading: 'lazy',
+                         referrerpolicy: 'no-referrer'});
+      imgEl.addEventListener('error', () => {
+        const ph = el('div', {class: 'shopper-ph'}, 'image unavailable' + (imgHost ? ` · ${imgHost}` : ''));
+        imgEl.replaceWith(ph);
+      });
+    } else {
+      imgEl = el('div', {class: 'shopper-ph'}, imgUrl ? (imgHost || 'image') : 'no image');
+    }
+    const shopper = el('div', {class: 'shopper-card'},
+      imgEl,
+      el('div', {class: 'shopper-body'},
+        el('div', {class: 'shopper-crumb'}, row.fields.category || '—'),
+        el('div', {class: 'shopper-name'}, displayName),
+        el('div', {class: 'shopper-chips'},
+          sizeChip ? el('span', {class: 'ds-badge ds-badge--neutral'}, sizeChip) : null,
+          row.fields.gtin ? el('span', {class: 'ds-badge ds-badge--neutral',
+            style: 'font-family: var(--font-mono);'}, row.fields.gtin) : null,
+        ),
+      ),
     );
 
     // Flags section
@@ -891,6 +1008,7 @@
     }
 
     const body = el('div', {class: 'drawer'},
+      shopper,
       el('div', {},
         el('div', {class: 'ds-caps', style: 'margin-bottom: 10px;'}, 'Flags'),
         el('div', {class: 'drawer-flags'}, ...flagList),
@@ -901,11 +1019,19 @@
       ),
     );
 
+    const footer = hasReviewFlags
+      ? el('div', {class: 'kbd-hint'},
+          el('span', {}, el('span', {class: 'ds-kbd'}, '1'), 'confirmed error'),
+          el('span', {}, el('span', {class: 'ds-kbd'}, '2'), 'false positive'),
+          el('span', {}, el('span', {class: 'ds-kbd'}, 'j'), el('span', {class: 'ds-kbd'}, 'k'), 'next / prev'),
+          el('span', {}, el('span', {class: 'ds-kbd'}, 'Esc'), 'close'))
+      : null;
+
     // Overlay + dialog
     const overlay = el('div', {class: 'ds-dialog-overlay', role: 'presentation',
                                onclick: (e) => { if (e.target === overlay) closeDrawer(); }},
       el('div', {class: 'ds-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'drawer-title'},
-        header, body,
+        header, body, footer,
       ),
     );
     overlay.id = 'row-dialog';
@@ -944,10 +1070,10 @@
     if (canReview) {
       card.appendChild(el('div', {class: 'review-actions'},
         el('button', {class: 'ds-btn ds-btn--primary ds-btn--sm', type: 'button',
-                      onclick: () => sendReview(rowId, 'confirmed_error', f.code)},
+                      onclick: () => sendReview(rowId, 'confirmed_error', f.code, true)},
           'Confirmed error'),
         el('button', {class: 'ds-btn ds-btn--secondary ds-btn--sm', type: 'button',
-                      onclick: () => sendReview(rowId, 'false_positive', f.code)},
+                      onclick: () => sendReview(rowId, 'false_positive', f.code, true)},
           'False positive'),
       ));
       card.appendChild(el('div', {class: 'review-hint'},
@@ -965,22 +1091,84 @@
     }
   }
 
-  async function sendReview(rowId, verdict, flagCode) {
+  async function sendReview(rowId, verdict, flagCode, advance) {
     try {
       await api(`/api/batches/${state.currentBatchId}/rows/${rowId}/review`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({human_verdict: verdict, flag_code: flagCode, note: 'via UI'}),
       });
-      const totalReviews = state.currentBatch.rows.reduce(
-        (n, r) => n + ((r.reviews || []).length), 0) + 1;
-      toast('Learned', `${totalReviews} correction${totalReviews === 1 ? '' : 's'} stored.`, 'success');
-      closeDrawer();
-      // Refresh the batch so the review shows on the row and Re-run label updates.
-      await openBatch(state.currentBatchId);
+      // Update locally — no full re-render, so the queue stays responsive.
+      const row = state.currentBatch.rows.find(r => r.row_id === rowId);
+      if (row) (row.reviews = row.reviews || []).push({human_verdict: verdict, flag_code: flagCode});
+      const {done, total} = reviewCounts();
+      toast(verdict === 'false_positive' ? 'Marked false positive' : 'Confirmed',
+            `Reviewed ${done} of ${total}. Re-run to apply.`, 'success');
+      if (advance) {
+        const next = nextUnreviewed(rowId);
+        closeDrawer();
+        renderBatchView();  // refresh table checkmarks + progress underneath
+        if (next) { openDrawer(next); } else {
+          toast('Queue clear', 'Every flagged row reviewed. Re-run to fold the corrections in.', 'success');
+        }
+      } else {
+        closeDrawer();
+        renderBatchView();
+      }
     } catch (err) {
       toast('Review failed', String(err.message || err), 'danger');
     }
+  }
+
+  // Keyboard navigation over the unreviewed queue in display order.
+  function nextUnreviewed(fromRowId) {
+    const rows = displayedRows();
+    const queue = rows.filter(r => isReviewable(r) && !isReviewed(r) && r.row_id !== fromRowId);
+    if (!queue.length) return null;
+    const idx = rows.findIndex(r => r.row_id === fromRowId);
+    // prefer the next one after the current position, else wrap to the first
+    const after = queue.find(r => rows.indexOf(r) > idx);
+    return (after || queue[0]).row_id;
+  }
+  function stepCursor(dir) {
+    const rows = displayedRows();
+    const reviewable = rows.filter(isReviewable);
+    if (!reviewable.length) return;
+    let i = reviewable.findIndex(r => r.row_id === state.focusRowId);
+    if (i < 0) i = dir > 0 ? -1 : 0;
+    const ni = Math.max(0, Math.min(reviewable.length - 1, i + dir));
+    state.focusRowId = reviewable[ni].row_id;
+    renderBatchView();
+    const tr = $(`tr[data-row-id="${state.focusRowId}"]`);
+    if (tr) tr.scrollIntoView({block: 'nearest'});
+  }
+  function installKeyboard() {
+    document.addEventListener('keydown', (e) => {
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (['INPUT','SELECT','TEXTAREA'].includes(tag)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (state.view !== 'batch') return;
+      const open = $('#row-dialog');
+      const curId = state.focusRowId;
+      const cur = curId && state.currentBatch.rows.find(r => r.row_id === curId);
+      switch (e.key) {
+        case 'j': case 'ArrowDown': e.preventDefault(); stepCursor(1); break;
+        case 'k': case 'ArrowUp':   e.preventDefault(); stepCursor(-1); break;
+        case 'Enter':
+          if (!open && curId) { e.preventDefault(); openDrawer(curId); }
+          break;
+        case '1':
+          if (open && cur && isReviewable(cur)) {
+            e.preventDefault(); sendReview(curId, 'confirmed_error', semanticFlags(cur)[0].code, true);
+          }
+          break;
+        case '2':
+          if (open && cur && isReviewable(cur)) {
+            e.preventDefault(); sendReview(curId, 'false_positive', semanticFlags(cur)[0].code, true);
+          }
+          break;
+      }
+    });
   }
 
   // ------------------------------------------------------------------
@@ -1181,6 +1369,8 @@
   })();
 
   (async function boot() {
+    try { state.config = await api('/api/config'); } catch (e) { /* keep defaults */ }
+    installKeyboard();
     await refreshBatchList();
     if (state.batches.length) {
       await openBatch(state.batches[0].batch_id);
