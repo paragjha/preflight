@@ -1,0 +1,24 @@
+# Render blueprint for the PUBLIC demo instance.
+#
+# Deploys the rules engine in demo-only mode: no key, no outbound calls, and
+# the upload routes are disabled so only the bundled synthetic batch runs.
+# The real-data instance is NEVER deployed — run it locally on 127.0.0.1
+# (see the README "Running it on real data" section).
+#
+# Connect the repo in the Render dashboard; this file supplies the settings.
+# The free plan sleeps when idle, so the first request after a lull takes ~30s.
+services:
+  - type: web
+    name: preflight-demo
+    runtime: python
+    plan: free
+    # demo_batch.xlsx is gitignored, so build it during deploy.
+    buildCommand: pip install -r requirements.txt && python generator.py
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SEMANTIC_ENGINE
+        value: rules
+      - key: PREFLIGHT_DEMO_ONLY
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.12.7"

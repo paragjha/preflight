@@ -219,6 +219,12 @@ def test_demo_batch_flags_18_broken_and_cross_row_dupe():
 
     rows = ingest(xlsx)
     assert len(rows) == 60
+    # Reset the persistent SKU counter so the 10 blank-SKU rows autogenerate
+    # from AE-000001 (otherwise a stale counter can mint SKUs that collide with
+    # the hardcoded AE-0001xx SKUs and trip DUPLICATE_SKU).
+    import validate_schema as _vs
+    if os.path.exists(_vs.SKU_COUNTERS_PATH):
+        os.remove(_vs.SKU_COUNTERS_PATH)
     check_schema_batch(rows, region="AE")
 
     def non_autofix(row):

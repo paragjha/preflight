@@ -50,6 +50,11 @@ def _ensure_files(xlsx):
 
 def _run_pipeline(xlsx, corrections):
     rows = ingest(os.path.join(HERE, xlsx))
+    # Reset the persistent SKU counter so blank-SKU rows autogenerate from
+    # AE-000001 every run — keeps the scores reproducible.
+    import validate_schema as _vs
+    if os.path.exists(_vs.SKU_COUNTERS_PATH):
+        os.remove(_vs.SKU_COUNTERS_PATH)
     check_schema_batch(rows, region="AE")
     result = engine.run_semantic(rows, corrections)
     for row in rows:

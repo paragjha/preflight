@@ -334,21 +334,25 @@
       el('div', {class: 'upload-inner'},
         el('div', {class: 'upload-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON.upload}</svg>`}),
         el('div', {style: 'text-align: center;'},
-          el('div', {style: 'font-weight: 600; font-size: 15px; margin-bottom: 4px;'}, 'Drop your .xlsx here'),
-          el('div', {class: 'ds-hint'}, 'or pick a file below'),
+          el('div', {style: 'font-weight: 600; font-size: 15px; margin-bottom: 4px;'},
+            state.config.demo_only ? 'Public demo' : 'Drop your .xlsx here'),
+          el('div', {class: 'ds-hint'},
+            state.config.demo_only ? 'rules engine · no key · no data leaves the server' : 'or pick a file below'),
         ),
         buildUploadForm(),
       ),
     );
     wrap.appendChild(zone);
 
-    // Drag & drop
-    ['dragenter', 'dragover'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('is-drag'); }));
-    ['dragleave', 'drop'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('is-drag'); }));
-    zone.addEventListener('drop', e => {
-      const f = e.dataTransfer.files[0];
-      if (f) { $('#f-file').files = e.dataTransfer.files; onFilePicked(); }
-    });
+    // Drag & drop (not in demo mode — there's no file input to fill)
+    if (!state.config.demo_only) {
+      ['dragenter', 'dragover'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('is-drag'); }));
+      ['dragleave', 'drop'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('is-drag'); }));
+      zone.addEventListener('drop', e => {
+        const f = e.dataTransfer.files[0];
+        if (f) { $('#f-file').files = e.dataTransfer.files; onFilePicked(); }
+      });
+    }
 
     main.appendChild(wrap);
   }
