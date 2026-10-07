@@ -57,11 +57,15 @@
   .upload-zone.is-drag { border-color: var(--brand); background: var(--brand-soft); }
   .upload-inner { display: flex; flex-direction: column; align-items: center; gap: 18px; }
   .upload-icon { width: 40px; height: 40px; color: var(--text-tertiary); }
-  .upload-form { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: start; width: 100%; }
-  .upload-form .file-input { width: 100%; height: var(--control-md); padding: 6px 12px; border-radius: var(--r-pill); border: 1px solid var(--border-default); background: var(--surface); font-family: var(--font-sans); font-size: 13px; }
-  /* Preflight button aligns with the input row (below the labels). */
-  .upload-form > .ds-btn { margin-top: 22px; }
-  .filename-tags { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-height: 0; }
+  /* Click-and-drag dropzone */
+  .dropzone { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 40px 24px; border: 2px dashed var(--border-strong); border-radius: var(--r-2xl); background: var(--surface); cursor: pointer; text-align: center; transition: border-color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out); }
+  .dropzone:hover { border-color: var(--violet-400); background: var(--surface-hover); }
+  .dropzone.is-drag { border-color: var(--brand); background: var(--brand-soft); }
+  .dropzone .upload-icon { width: 30px; height: 30px; }
+  .dropzone-hint { font-size: var(--text-sm); color: var(--text-tertiary); }
+  .upload-controls { display: flex; align-items: flex-end; gap: 12px; justify-content: space-between; flex-wrap: wrap; margin-top: 16px; }
+  .filename-tags { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-height: 0; justify-content: center; }
+  .filename-tags:empty { display: none; }
   /* Demo shortcut: caps label + button + hint sit together (law of proximity). */
   .upload-demo-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .upload-demo-row .ds-caps { color: var(--text-tertiary); }
@@ -330,66 +334,84 @@
       el('p', {}, "Drop the partner sheets in. PreFlight fixes the mechanical, predicts the bounces, and finds what the validator can't see."),
     ));
 
-    const zone = el('div', {class: 'upload-zone'},
-      el('div', {class: 'upload-inner'},
-        el('div', {class: 'upload-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON.upload}</svg>`}),
-        el('div', {style: 'text-align: center;'},
-          el('div', {style: 'font-weight: 600; font-size: 15px; margin-bottom: 4px;'},
-            state.config.demo_only ? 'Public demo' : 'Drop your .xlsx here'),
-          el('div', {class: 'ds-hint'},
-            state.config.demo_only ? 'rules engine · no key · no data leaves the server' : 'or pick a file below'),
+    // Demo mode: a simple card, no file controls.
+    if (state.config.demo_only) {
+      wrap.appendChild(el('div', {class: 'upload-zone'},
+        el('div', {class: 'upload-inner'},
+          el('div', {class: 'upload-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON.upload}</svg>`}),
+          el('div', {style: 'text-align: center;'},
+            el('div', {style: 'font-weight: 600; font-size: 15px; margin-bottom: 4px;'}, 'Public demo'),
+            el('div', {class: 'ds-hint'}, 'rules engine · no key · no data leaves the server'),
+          ),
+          el('button', {type: 'button', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'demo-btn', onclick: onLoadDemo},
+            icon(ICON.sparkle), 'Load demo batch'),
+          el('span', {class: 'ds-hint'}, '60 rows, 18 rejects, 12 subtle errors.'),
         ),
-        buildUploadForm(),
-      ),
-    );
-    wrap.appendChild(zone);
-
-    // Drag & drop (not in demo mode — there's no file input to fill)
-    if (!state.config.demo_only) {
-      ['dragenter', 'dragover'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('is-drag'); }));
-      ['dragleave', 'drop'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('is-drag'); }));
-      zone.addEventListener('drop', e => {
-        const f = e.dataTransfer.files[0];
-        if (f) { $('#f-file').files = e.dataTransfer.files; onFilePicked(); }
-      });
+      ));
+      main.appendChild(wrap);
+      return;
     }
 
+    wrap.appendChild(buildUploadForm());
     main.appendChild(wrap);
   }
 
   function buildUploadForm() {
-    // Public demo: no file uploads. Only "Load demo batch" remains.
-    if (state.config.demo_only) {
-      return el('div', {style: 'width: 100%; display: flex; flex-direction: column; gap: 16px; align-items: center;'},
-        el('div', {class: 'ds-hint', style: 'text-align: center;'},
-          'This is the public demo — uploads are disabled. Load the bundled batch to explore.'),
-        el('button', {type: 'button', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'demo-btn', onclick: onLoadDemo},
-          icon(ICON.sparkle), 'Load demo batch'),
-        el('span', {class: 'ds-hint'}, '60 rows, 18 rejects, 12 subtle errors.'),
-      );
-    }
-    const form = el('form', {id: 'upload-form', onsubmit: onUploadSubmit, style: 'width: 100%;'},
-      el('div', {class: 'upload-form'},
-        el('div', {class: 'ds-field'},
-          el('label', {class: 'ds-label', for: 'f-file'}, 'File'),
-          el('input', {type: 'file', accept: '.xlsx', id: 'f-file', class: 'file-input', required: 'true', onchange: onFilePicked}),
-        ),
-        el('div', {class: 'ds-field'},
-          el('label', {class: 'ds-label', for: 'f-region'}, 'Region'),
-          (() => {
-            const box = el('div', {class: 'ds-input-box'});
-            const sel = el('select', {id: 'f-region', class: 'ds-input', style: 'min-width: 110px;'});
-            for (const r of ['AE', 'SA', 'EG']) sel.appendChild(el('option', {value: r}, r));
-            box.appendChild(sel);
-            box.appendChild(el('span', {class: 'ds-select-chevron', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'}));
-            return box;
-          })(),
-          el('div', {class: 'ds-hint'}, 'Matches the region the cataloging tool is set to.'),
-        ),
-        el('button', {type: 'submit', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'upload-btn'},
-          icon(ICON.check), 'Preflight this batch'),
-      ),
+    // Hidden native input; the dropzone and its button drive it.
+    const fileInput = el('input', {type: 'file', accept: '.xlsx', id: 'f-file',
+                                    style: 'display: none;', onchange: onFilePicked});
+
+    const dropzone = el('div', {class: 'dropzone', id: 'dropzone', role: 'button',
+                                tabindex: '0', 'aria-label': 'Upload an .xlsx file'},
+      fileInput,
+      el('div', {class: 'upload-icon', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON.upload}</svg>`}),
+      el('button', {type: 'button', class: 'ds-btn ds-btn--secondary ds-btn--md', id: 'upload-browse',
+                    onclick: (e) => { e.stopPropagation(); fileInput.click(); }},
+        el('span', {class: 'ds-btn-icon', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>'}),
+        'Upload file'),
+      el('div', {class: 'dropzone-hint'}, 'Drag and drop, or click to browse · .xlsx up to 5 MB'),
       el('div', {class: 'filename-tags', id: 'filename-tags'}),
+    );
+
+    // Click anywhere on the zone (except a button) opens the picker.
+    dropzone.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      fileInput.click();
+    });
+    dropzone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+    });
+    ['dragenter', 'dragover'].forEach(evt => dropzone.addEventListener(evt, e => {
+      e.preventDefault(); dropzone.classList.add('is-drag');
+    }));
+    ['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, e => {
+      e.preventDefault(); dropzone.classList.remove('is-drag');
+    }));
+    dropzone.addEventListener('drop', e => {
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) { fileInput.files = e.dataTransfer.files; onFilePicked(); }
+    });
+
+    const controls = el('div', {class: 'upload-controls'},
+      el('div', {class: 'ds-field'},
+        el('label', {class: 'ds-label', for: 'f-region'}, 'Region'),
+        (() => {
+          const box = el('div', {class: 'ds-input-box'});
+          const sel = el('select', {id: 'f-region', class: 'ds-input', style: 'min-width: 110px;'});
+          for (const r of ['AE', 'SA', 'EG']) sel.appendChild(el('option', {value: r}, r));
+          box.appendChild(sel);
+          box.appendChild(el('span', {class: 'ds-select-chevron', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'}));
+          return box;
+        })(),
+        el('div', {class: 'ds-hint'}, 'Matches the region the cataloging tool is set to.'),
+      ),
+      el('button', {type: 'submit', class: 'ds-btn ds-btn--primary ds-btn--md', id: 'upload-btn', disabled: 'true'},
+        icon(ICON.check), 'Preflight this batch'),
+    );
+
+    const form = el('form', {id: 'upload-form', onsubmit: onUploadSubmit, style: 'width: 100%;'},
+      dropzone,
+      controls,
       el('hr', {class: 'ds-divider', style: 'margin: 4px 0;'}),
       el('div', {class: 'upload-demo-row'},
         el('span', {class: 'ds-caps'}, 'Or try the sample'),
@@ -416,14 +438,22 @@
     const file = input.files[0];
     state.pendingFile = file || null;
     const tags = $('#filename-tags');
+    const btn = $('#upload-btn');
     tags.innerHTML = '';
     if (file) {
+      if (btn) btn.disabled = false;
       tags.appendChild(el('span', {class: 'ds-tag'},
         file.name,
         el('button', {class: 'ds-tag-x', type: 'button', 'aria-label': `remove ${file.name}`,
-                      onclick: () => { input.value = ''; state.pendingFile = null; tags.innerHTML = ''; }},
+                      onclick: (e) => {
+                        e.stopPropagation();   // don't reopen the picker
+                        input.value = ''; state.pendingFile = null; tags.innerHTML = '';
+                        if (btn) btn.disabled = true;
+                      }},
           icon(ICON.x)),
       ));
+    } else if (btn) {
+      btn.disabled = true;
     }
   }
 
